@@ -1,0 +1,11 @@
+.venv/
+.venv39/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.pycache/
+build/
+dist/
+*.egg-info/
+artifacts/
+.DS_Store

@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bluedesk"
+version = "0.1.0"
+description = "BlueDesk — cross-platform Bluetooth device manager and control console for Windows and macOS"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "BlueDesk Contributors" }]
+dependencies = [
+  "PySide6>=6.4",
+  "bleak>=0.22",
+]
+
+[project.optional-dependencies]
+windows = ["pycaw>=20240210", "comtypes>=1.2"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "Pillow>=10"]
+
+[project.scripts]
+bluedesk = "bluedeck.app:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q"
