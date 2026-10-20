@@ -22,6 +22,7 @@ from .models import (
     Transport,
 )
 from .platform.base import PlatformAdapter, PlatformError
+from .security import MAX_GATT_BYTES, MAX_SERVICES, MAX_CHARACTERISTICS, RateLimiter
 
 try:
     from bleak import BleakClient
@@ -71,6 +72,8 @@ class ConnectionManager(QObject):
         self._demo_connected: Set[str] = set()
         self._demo_devices: Dict[str, DeviceInfo] = {}
         self._demo_generation = 0
+        self._notification_rate = RateLimiter(20)
+        self._total_notification_rate = RateLimiter(100, max_keys=1)
         self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="bluedesk-system")
         self._system_result.connect(self._on_system_result)
 
@@ -165,6 +168,9 @@ class ConnectionManager(QObject):
         self.runner.submit(self._read_async(address, client, uuid))
 
     def write_characteristic(self, address: str, uuid: str, data: bytes, response: bool = True) -> None:
+        if len(data) > MAX_GATT_BYTES:
+            self.operation_finished.emit(address, "写入数据超过 512 字节限制", False)
+            return
         device = self._demo_device(address)
         if device is not None:
             self.value_received.emit(address, uuid, data, "write")
@@ -241,11 +247,12 @@ class ConnectionManager(QObject):
             return True
         if device.transport is Transport.DUAL:
             return device.device_type.group not in ("audio",)
-        return bool(device.metadata.get("ble_address"))
+        return False
 
     async def _connect_ble(self, device: DeviceInfo) -> None:
         address = device.address
-        connect_address = str(device.metadata.get("ble_address") or address)
+        # Never let an advertisement or old saved alias redirect a connection.
+        connect_address = address
         client = None
         try:
             if BleakClient is None:
@@ -281,9 +288,15 @@ class ConnectionManager(QObject):
         result: List[GattServiceInfo] = []
         if collection is None:
             return result
+        characteristic_count = 0
         for service in collection:
+            if len(result) >= MAX_SERVICES:
+                raise ValueError("设备服务数量超过安全限制")
             chars: List[GattCharacteristicInfo] = []
             for char in getattr(service, "characteristics", []) or []:
+                characteristic_count += 1
+                if characteristic_count > MAX_CHARACTERISTICS:
+                    raise ValueError("设备特征值数量超过安全限制")
                 try:
                     props = [str(p) for p in (getattr(char, "properties", []) or [])]
                 except TypeError:
@@ -330,8 +343,7 @@ class ConnectionManager(QObject):
 
     async def _read_async(self, address: str, client: object, uuid: str) -> None:
         try:
-            data = await client.read_gatt_char(uuid)  # type: ignore[attr-defined]
-            payload = bytes(data)
+            payload = await self._read_limited(client, uuid)
             self.value_received.emit(address, uuid, payload, "read")
             self._log("INFO", address, "读取 %s -> %s" % (short_uuid(uuid), payload.hex(" ")))
         except Exception as exc:
@@ -360,9 +372,7 @@ class ConnectionManager(QObject):
             else:
                 await client.start_notify(  # type: ignore[attr-defined]
                     uuid,
-                    lambda _char, data: self.value_received.emit(
-                        address, uuid, bytes(data), "notify"
-                    ),
+                    lambda _char, data: self._receive_notification(address, uuid, data),
                 )
                 self._notifying.add(key)
                 self.operation_finished.emit(address, "已订阅通知", True)
@@ -382,12 +392,18 @@ class ConnectionManager(QObject):
     # ------------------------------------------------------------------
     # Telemetry
     # ------------------------------------------------------------------
+    async def _read_limited(self, client: object, uuid: str) -> bytes:
+        data = await client.read_gatt_char(uuid)  # type: ignore[attr-defined]
+        if len(data) > MAX_GATT_BYTES:
+            raise ValueError("设备读取数据超过 512 字节限制")
+        return bytes(data)
+
     async def _read_telemetry_async(self, address: str, client: object) -> None:
         telemetry = Telemetry()
         chars = self._characteristic_map(address)
         if "2a19" in chars:
             try:
-                data = await client.read_gatt_char(chars["2a19"])  # type: ignore[attr-defined]
+                data = await self._read_limited(client, chars["2a19"])
                 telemetry.battery = parse_battery_level(bytes(data))
                 telemetry.extra["battery_source"] = "标准 GATT · Battery Level 0x2A19"
             except Exception as exc:
@@ -401,7 +417,7 @@ class ConnectionManager(QObject):
             if short not in chars:
                 continue
             try:
-                data = await client.read_gatt_char(chars[short])  # type: ignore[attr-defined]
+                data = await self._read_limited(client, chars[short])
                 setattr(telemetry, attr, parse_utf8(bytes(data)))
             except Exception as exc:
                 self._log("WARN", address, "读取 %s 失败：%s" % (short, exc))
@@ -428,8 +444,9 @@ class ConnectionManager(QObject):
             uid = chars["2a37"]
 
             def callback(_char, data) -> None:
-                payload = bytes(data)
-                self.value_received.emit(address, uid, payload, "notify")
+                payload = self._receive_notification(address, uid, data)
+                if payload is None:
+                    return
                 heart_rate = parse_heart_rate(payload)
                 if heart_rate is not None:
                     telemetry = Telemetry(heart_rate=heart_rate, updated_at=time.time())
@@ -440,6 +457,15 @@ class ConnectionManager(QObject):
             self._log("INFO", address, "已订阅心率测量通知")
         except Exception as exc:
             self._log("WARN", address, "订阅心率通知失败：%s" % exc)
+
+    def _receive_notification(self, address: str, uuid: str, data) -> Optional[bytes]:
+        if len(data) > MAX_GATT_BYTES:
+            return None
+        if not self._notification_rate.allow(address) or not self._total_notification_rate.allow("notifications"):
+            return None
+        payload = bytes(data)
+        self.value_received.emit(address, uuid, payload, "notify")
+        return payload
 
     def _characteristic_map(self, address: str) -> Dict[str, str]:
         mapping: Dict[str, str] = {}

@@ -144,16 +144,18 @@ def test_failed_disconnect_preserves_existing_connection(real_controller):
     assert states[-1] == ConnectionState.CONNECTED.value
 
 
-def test_ble_record_merged_with_system_record_keeps_valid_selection(real_controller):
+def test_same_name_advertisement_stays_separate_from_paired_device(real_controller):
     controller, _ = real_controller
     paired = DeviceInfo(address="AA:BB", name="Headset", paired=True,
                         transport=Transport.CLASSIC, source="system_profiler")
     controller._upsert(paired)
     controller._on_device_found(DeviceInfo(address="CB-UUID", name="Headset", rssi=-50,
                                           transport=Transport.BLE, source="bleak"))
-    assert controller.selected is paired
-    assert paired.metadata["ble_address"] == "CB-UUID"
-    assert paired.transport is Transport.DUAL
+    assert len(controller.devices()) == 2
+    assert controller.device("AA:BB") is paired
+    assert "ble_address" not in paired.metadata
+    assert paired.transport is Transport.CLASSIC
+    assert not controller.device("CB-UUID").paired
 
 
 def test_same_name_system_devices_remain_distinct(real_controller):
@@ -163,7 +165,7 @@ def test_same_name_system_devices_remain_distinct(real_controller):
     assert len(controller.devices()) == 2
 
 
-def test_ble_name_arriving_after_first_advertisement_merges_placeholder(real_controller):
+def test_late_advertised_name_does_not_merge_identities(real_controller):
     controller, _ = real_controller
     paired = DeviceInfo(address="AA:BB", name="Headset", paired=True,
                         transport=Transport.CLASSIC, source="system_profiler")
@@ -172,9 +174,10 @@ def test_ble_name_arriving_after_first_advertisement_merges_placeholder(real_con
     assert len(controller.devices()) == 2
     controller._on_device_found(DeviceInfo(address="CB-UUID", name="Headset", rssi=-49,
                                           transport=Transport.BLE, source="bleak"))
-    assert controller.devices() == [paired]
-    assert controller.device("CB-UUID") is paired
-    assert paired.metadata["ble_address"] == "CB-UUID"
+    assert len(controller.devices()) == 2
+    assert controller.device("CB-UUID") is not paired
+    assert controller.device("CB-UUID").name == "Headset"
+    assert "ble_address" not in paired.metadata
 
 
 def test_scanning_before_system_enumeration_keeps_mac_and_ble_identity(real_controller):
@@ -184,10 +187,10 @@ def test_scanning_before_system_enumeration_keeps_mac_and_ble_identity(real_cont
     controller._on_paired_loaded([DeviceInfo(address="AA:BB", name="Headset", paired=True, connected=True,
         state=ConnectionState.CONNECTED, source="system_profiler", transport=Transport.CLASSIC,
         metadata={"system_info": {"device_batteryLevelMain": "83%"}})], "")
-    assert len(controller.devices()) == 1
-    assert controller.device("AA:BB") is controller.device("CB-UUID")
-    assert controller.selected.metadata["system_address"] == "AA:BB"
-    assert controller.telemetry_for(controller.selected.address).battery == 83
+    assert len(controller.devices()) == 2
+    assert controller.device("AA:BB") is not controller.device("CB-UUID")
+    assert controller.telemetry_for("AA:BB").battery == 83
+    assert not controller.device("CB-UUID").paired
 
 
 def test_startup_scan_does_not_override_user_switching_to_demo(real_controller):
@@ -223,7 +226,7 @@ def test_native_macos_connection_uses_system_address_and_checks_result(monkeypat
     bridge.deviceWithAddressString_.return_value = native
     monkeypatch.setattr(macos, "IOBluetoothDevice", bridge)
     platform = macos.MacOSPlatform()
-    device = DeviceInfo(address="CB-UUID", metadata={"system_address": "AA:BB:CC:DD:EE:FF"})
+    device = DeviceInfo(address="AA:BB:CC:DD:EE:FF", metadata={"system_address": "UNTRUSTED"})
     assert platform.system_connect(device)[0]
     bridge.deviceWithAddressString_.assert_called_with("AA:BB:CC:DD:EE:FF")
     assert platform.system_disconnect(device)[0]

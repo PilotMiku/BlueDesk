@@ -9,10 +9,10 @@ from typing import List, Optional
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QFont, QTextCursor
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QFileDialog,
     QHBoxLayout,
-    QLabel,
     QLineEdit,
     QMessageBox,
     QTextBrowser,
@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .widgets import PlainLabel as QLabel
 from ..controller import AppController
 from ..models import LogEntry
 from .widgets import make_button, make_pill
@@ -83,10 +84,13 @@ class LogPanel(QWidget):
         layout.addWidget(self.view, 1)
 
         footer = QHBoxLayout()
-        self.hint = QLabel("HEX 数据、连接状态、GATT 读写与错误都会记录。日志写入应用数据目录的 bluedeck.jsonl。")
+        self.hint = QLabel("通信详情仅保留在本次会话。磁盘日志和默认导出会隐藏设备身份及通信内容。")
         self.hint.setObjectName("Faint")
         self.hint.setWordWrap(True)
         footer.addWidget(self.hint, 1)
+        self.include_sensitive = QCheckBox("包含设备身份和通信内容")
+        self.include_sensitive.setToolTip("仅在确实需要完整调试数据时勾选；请勿将完整日志公开分享。")
+        footer.addWidget(self.include_sensitive)
         export = make_button("导出日志", "ghost")
         export.clicked.connect(self._export)
         clear = make_button("清空", "ghost")
@@ -162,7 +166,7 @@ class LogPanel(QWidget):
         )
         if path:
             try:
-                self.controller.export_logs(path)
+                self.controller.export_logs(path, include_sensitive=self.include_sensitive.isChecked())
             except OSError as exc:
                 QMessageBox.warning(self, "导出失败", str(exc))
 

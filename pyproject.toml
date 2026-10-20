@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=83.0.0", "wheel>=0.46.2"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,18 +7,18 @@ name = "bluedesk"
 version = "0.1.0"
 description = "BlueDesk — cross-platform Bluetooth device manager and control console for Windows and macOS"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "BlueDesk Contributors" }]
 dependencies = [
-  "PySide6>=6.4",
-  "bleak>=0.22",
-  "pyobjc-framework-IOBluetooth>=10.3; sys_platform == 'darwin'",
+  "PySide6>=6.10.3,<7",
+  "bleak>=1.1.1,<4",
+  "pyobjc-framework-IOBluetooth>=12.0,<13; sys_platform == 'darwin'",
 ]
 
 [project.optional-dependencies]
 windows = ["pycaw>=20240210", "comtypes>=1.2"]
-dev = ["pytest>=8", "pytest-asyncio>=0.23", "Pillow>=10"]
+dev = ["pytest>=9.0.3,<10", "pytest-asyncio>=1.2,<2", "Pillow>=12.3.0,<13", "pip-audit>=2.10", "pip>=26.2", "setuptools>=83.0.0"]
 
 [project.scripts]
 bluedesk = "bluedesk.app:main"

@@ -1,6 +1,7 @@
 """Reusable custom widgets and small visual primitives."""
 from __future__ import annotations
 
+import html
 from typing import Optional
 
 from PySide6.QtCore import QEasingCurve, QRectF, QTimer, Qt, Signal
@@ -8,7 +9,7 @@ from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
-    QLabel,
+    QLabel as QtLabel,
     QPushButton,
     QSizePolicy,
     QVBoxLayout,
@@ -34,6 +35,22 @@ def clear_layout(layout) -> None:
                 clear_layout(sub)
 
 
+class PlainLabel(QtLabel):
+    """Treat external text as plain text, never HTML."""
+
+    def __init__(self, text: str = "", parent=None):
+        super().__init__(parent)
+        self.setTextFormat(Qt.PlainText)
+        self.setText(text)
+
+    def setToolTip(self, text: str) -> None:
+        super().setToolTip(plain_tooltip(text))
+
+
+def plain_tooltip(text: str) -> str:
+    return "<qt><pre>" + html.escape(text[:4096]) + "</pre></qt>"
+
+
 def make_button(text: str, variant: str = "", tooltip: str = "") -> QPushButton:
     button = QPushButton(text)
     if variant:
@@ -44,8 +61,8 @@ def make_button(text: str, variant: str = "", tooltip: str = "") -> QPushButton:
     return button
 
 
-def make_pill(text: str, tone: str = "") -> QLabel:
-    label = QLabel(text)
+def make_pill(text: str, tone: str = "") -> PlainLabel:
+    label = PlainLabel(text)
     label.setObjectName("Pill")
     if tone:
         label.setProperty("tone", tone)
@@ -77,10 +94,10 @@ class SectionHeader(QWidget):
         layout.setSpacing(10)
         texts = QVBoxLayout()
         texts.setSpacing(2)
-        self.title = QLabel(title)
+        self.title = PlainLabel(title)
         self.title.setObjectName("SectionTitle")
         texts.addWidget(self.title)
-        self.subtitle = QLabel(subtitle)
+        self.subtitle = PlainLabel(subtitle)
         self.subtitle.setObjectName("Faint")
         self.subtitle.setWordWrap(True)
         texts.addWidget(self.subtitle)
@@ -160,11 +177,11 @@ class MetricTile(QFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 11, 14, 11)
         layout.setSpacing(3)
-        self.label = QLabel(label)
+        self.label = PlainLabel(label)
         self.label.setObjectName("MetricLabel")
-        self.value = QLabel(value)
+        self.value = PlainLabel(value)
         self.value.setObjectName("MetricValueSmall")
-        self.hint = QLabel(hint)
+        self.hint = PlainLabel(hint)
         self.hint.setObjectName("Faint")
         self.hint.setWordWrap(True)
         layout.addWidget(self.label)
@@ -259,11 +276,11 @@ class EmptyState(QWidget):
         row.addWidget(glyph)
         row.addStretch(1)
         layout.addLayout(row)
-        title = QLabel("选择一个蓝牙设备")
+        title = PlainLabel("选择一个蓝牙设备")
         title.setObjectName("HeroTitle")
         title.setAlignment(Qt.AlignCenter)
         layout.addWidget(title)
-        subtitle = QLabel("从左侧列表选择设备，BlueDesk 会按设备类型自动加载控制面板。\n未识别的设备也可以使用通用 GATT、RSSI 与日志功能。")
+        subtitle = PlainLabel("从左侧列表选择设备，BlueDesk 会按设备类型自动加载控制面板。\n未识别的设备也可以使用通用 GATT、RSSI 与日志功能。")
         subtitle.setObjectName("Muted")
         subtitle.setAlignment(Qt.AlignCenter)
         subtitle.setWordWrap(True)

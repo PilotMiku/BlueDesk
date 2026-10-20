@@ -9,7 +9,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
     QHBoxLayout,
-    QLabel,
     QLineEdit,
     QPushButton,
     QScrollArea,
@@ -19,10 +18,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .widgets import PlainLabel as QLabel
 from ..models import ConnectionState, DeviceInfo, DeviceType, Transport
 from .icons import DeviceGlyph
 from .theme import ACCENT, GREEN, MUTED, RED
-from .widgets import RssiBars, StatusDot, clear_layout, make_button, make_pill, repolish
+from .widgets import RssiBars, StatusDot, clear_layout, make_button, make_pill, repolish, plain_tooltip
 
 
 _TYPE_LABEL = {
@@ -48,7 +48,7 @@ class DeviceCard(QFrame):
         self.setObjectName("DeviceCard")
         self.setProperty("selected", "true" if is_selected else "false")
         self.setCursor(Qt.PointingHandCursor)
-        self.setToolTip(
+        self.setToolTip(plain_tooltip(
             "%s\n%s\n识别：%s（%s, %.0f%%）"
             % (
                 device.display_name,
@@ -57,7 +57,7 @@ class DeviceCard(QFrame):
                 device.classification_reason or device.transport.label,
                 device.confidence * 100,
             )
-        )
+        ))
         self.setMinimumHeight(88)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(12, 11, 12, 11)

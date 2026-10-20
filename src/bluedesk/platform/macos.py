@@ -154,7 +154,7 @@ class MacOSPlatform(PlatformAdapter):
         return False, "断开经典蓝牙设备需要安装 blueutil 或在系统设置中操作"
 
     def _native_connection(self, device: DeviceInfo, connect: bool) -> Tuple[bool, str]:
-        address = str(device.metadata.get("system_address") or device.address)
+        address = device.address
         if not address or address.startswith("macos:"):
             return False, "此设备缺少蓝牙地址，请在系统蓝牙设置中操作"
         native = IOBluetoothDevice.deviceWithAddressString_(address)

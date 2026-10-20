@@ -9,9 +9,9 @@
 
 ## 1. 支持范围
 
-Qt 兼容性提示：Bleak/CoreBluetooth 路径支持 macOS 10.15+，但 PySide6 6.5+ 官方最低系统版本高于 10.15。如果必须支持 10.15，请使用 PySide6 6.4.x，并在 10.15 真机验证 UI 与打包产物；新系统可继续使用 6.8.x。
+当前代码要求 Python 3.11+、PySide6 6.10.3+，本次验证使用 Python 3.14 和 Qt 6.12。旧文档中的 macOS 10.15/PySide6 6.4 组合不再属于当前依赖范围。最低 macOS 版本以所选 Qt/Python 的支持范围为准。
 
-| 能力 | macOS 10.15+ | 实现方式 |
+| 能力 | 当前支持的 macOS 环境 | 实现方式 |
 | --- | --- | --- |
 | BLE 扫描 | 支持 | Bleak / CoreBluetooth |
 | BLE GATT | 支持 | Bleak / CoreBluetooth |
@@ -81,7 +81,7 @@ B04F546F-216B-BEF5-7461-F4E6BB46020A
 - 该 UUID 在同一 Mac 上通常稳定，但不等同于 MAC。
 - 不能用它和 system_profiler 的 MAC 直接匹配。
 - 私有随机地址设备的 UUID 也可能变化。
-- 这是 BlueDesk 在 macOS 上按名称二次合并的原因。
+- BlueDesk 因此保留独立的系统设备记录与 BLE 记录，不再按名称跨地址合并，防止同名广播冒充已配对设备。
 
 ### 3.2 必须预加载 PyObjC
 

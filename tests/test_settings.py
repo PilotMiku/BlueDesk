@@ -40,9 +40,9 @@ def test_log_store_exports(tmp_path):
     csv_path = tmp_path / "out.csv"
     json_path = tmp_path / "out.json"
     text_path = tmp_path / "out.txt"
-    store.export_csv(csv_path)
-    store.export_json(json_path)
-    store.export_text(text_path)
+    store.export_csv(csv_path, include_sensitive=True)
+    store.export_json(json_path, include_sensitive=True)
+    store.export_text(text_path, include_sensitive=True)
     assert "hello" in csv_path.read_text(encoding="utf-8")
     assert json.loads(json_path.read_text(encoding="utf-8"))["entries"][0]["message"] == "hello"
     assert "hello" in text_path.read_text(encoding="utf-8")

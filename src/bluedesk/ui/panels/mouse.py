@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QButtonGroup, QGridLayout, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
+from PySide6.QtWidgets import QButtonGroup, QGridLayout, QHBoxLayout, QPushButton, QVBoxLayout
 
+from ..widgets import PlainLabel as QLabel
 from ...codecs import build_dpi_packet
 from ...models import DeviceInfo, Telemetry
 from ..widgets import Card, MetricTile, make_button, make_pill, repolish

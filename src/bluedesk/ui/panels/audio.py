@@ -7,13 +7,13 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
-    QLabel,
     QPushButton,
     QSlider,
     QVBoxLayout,
     QWidget,
 )
 
+from ..widgets import PlainLabel as QLabel
 from ...models import DeviceInfo, Telemetry
 from ..theme import ACCENT, MUTED
 from ..widgets import Card, MetricTile, RssiBars, make_button, make_pill

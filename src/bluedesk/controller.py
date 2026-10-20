@@ -27,6 +27,7 @@ from .platform.parsers import system_telemetry
 from .protocols import ProtocolRegistry
 from .scan_service import ScanService
 from .settings import AppSettings, LogStore, SettingsStore
+from .security import MAX_DEVICES, MAX_NAME_CHARS, NEARBY_TTL, MAX_GATT_BYTES, RateLimiter
 
 
 class AppController(QObject):
@@ -68,6 +69,7 @@ class AppController(QObject):
         self._demo_volume = 68
         self._paired_loading = False
         self._closed = False
+        self._value_rate = RateLimiter(20)
         self._executor = concurrent.futures.ThreadPoolExecutor(
             max_workers=3, thread_name_prefix="bluedesk-io"
         )
@@ -94,6 +96,10 @@ class AppController(QObject):
         self._paired_timer.setInterval(10000)
         self._paired_timer.timeout.connect(self.load_paired_async)
         self._paired_timer.start()
+        self._prune_timer = QTimer(self)
+        self._prune_timer.setInterval(10000)
+        self._prune_timer.timeout.connect(self._prune_nearby)
+        self._prune_timer.start()
         if demo_mode:
             self.load_demo_devices(auto_connect=True)
         else:
@@ -167,10 +173,7 @@ class AppController(QObject):
         direct = self._devices.get(key)
         if direct is not None or not key:
             return direct
-        return next((device for device in self._devices.values() if key in (
-            str(device.metadata.get("ble_address", "")).lower(),
-            str(device.metadata.get("system_address", "")).lower(),
-        )), None)
+        return None
 
     def telemetry_for(self, address: str) -> Optional[Telemetry]:
         return self._telemetry.get(address)
@@ -197,6 +200,11 @@ class AppController(QObject):
         for recent in self.settings_store.recent_devices():
             if recent.metadata.get("demo") or recent.address.startswith("demo:"):
                 continue
+            # Discard aliases persisted by older name-based merging releases.
+            recent.metadata.pop("ble_address", None)
+            recent.metadata.pop("system_address", None)
+            if recent.transport is Transport.DUAL:
+                recent.transport = Transport.BLE if recent.source == "bleak" else Transport.CLASSIC
             if recent.address and recent.address not in self._devices:
                 recent.connected = False
                 recent.state = ConnectionState.DISCONNECTED
@@ -247,34 +255,18 @@ class AppController(QObject):
     def _upsert(self, incoming: DeviceInfo) -> bool:
         key = incoming.key
         existing = self._devices.get(key)
-        if incoming.name and (existing is None or (
-            incoming.source == "bleak" and existing.source == "bleak"
-            and not self.connections.has_gatt_connection(existing.address)
-            and not self.connections.is_pending(existing.address)
-        )):
-            # A BLE scan and the system paired list expose different addresses
-            # on macOS. Merge by exact (case-insensitive) name only when one
-            # side is known to be paired, so two nearby same-name devices are
-            # not collapsed into one.
-            candidates = [candidate for candidate in self._devices.values()
-                if (
-                    candidate.name
-                    and normalize_name(candidate.name) == normalize_name(incoming.name)
-                    and (candidate.paired or incoming.paired)
-                    and (candidate.source == "bleak") != (incoming.source == "bleak")
-                )]
-            if len(candidates) == 1:
-                candidate = candidates[0]
-                if existing is not None and existing is not candidate:
-                    # A first advertisement can be unnamed. Merge the old
-                    # placeholder once its later advertisements expose a name.
-                    candidate.merge(existing)
-                    self._devices.pop(existing.key, None)
-                    if self._selected_key == existing.key:
-                        self._selected_key = candidate.key
-                        self.selection_changed.emit(candidate)
-                existing = candidate
         if existing is None:
+            if len(self._devices) >= MAX_DEVICES:
+                self._prune_nearby()
+            if len(self._devices) >= MAX_DEVICES:
+                if not incoming.paired:
+                    return False
+                disposable = next((key for key, d in self._devices.items()
+                    if not d.paired and not d.connected and key != self._selected_key
+                    and not self.connections.is_pending(d.address)), None)
+                if disposable is None:
+                    return False
+                self._remove_nearby(disposable)
             self._devices[key] = incoming
             return True
         changed = existing.merge(incoming)
@@ -285,26 +277,39 @@ class AppController(QObject):
             self.device_updated.emit(existing)
         return changed
 
+    def _remove_nearby(self, key: str) -> None:
+        device = self._devices.pop(key)
+        self._telemetry.pop(device.address, None)
+        self._services.pop(device.address, None)
+
+    def _prune_nearby(self) -> None:
+        expired = [key for key, d in self._devices.items()
+            if not d.paired and not d.connected and key != self._selected_key
+            and not self.connections.is_pending(d.address)
+            and time.time() - d.last_seen > NEARBY_TTL]
+        for key in expired:
+            self._remove_nearby(key)
+        if expired:
+            self.devices_changed.emit()
+
     def _on_device_found(self, device: DeviceInfo) -> None:
         if self._demo_mode or self._closed:
             return
-        if device.source == "bleak" and device.address:
-            # Keep the CoreBluetooth UUID even if this record is later merged
-            # with a macOS classic/system entry that has a different address.
-            device.metadata["ble_address"] = device.address
-        existing = self._devices.get(device.key)
-        if existing and existing.paired:
-            device.paired = True
-        self._upsert(device)
+        device.name = device.name[:MAX_NAME_CHARS]
+        device.metadata = {"advertisement": True}
+        device.paired = False
+        device.connected = False
+        changed = self._upsert(device)
+        if self.device(device.address) is None:
+            return
         if not self._selected_key and device.rssi is not None and device.name.strip():
-            merged = self.device(device.address) or next(
-                (d for d in self._devices.values() if d.metadata.get("ble_address") == device.address), None
-            )
+            merged = self.device(device.address)
             if merged is None:
                 return
             self._selected_key = merged.key
             self.selection_changed.emit(self.selected)
-        self.devices_changed.emit()
+        if changed:
+            self.devices_changed.emit()
 
     def select(self, address: str) -> None:
         device = self.device(address)
@@ -479,7 +484,6 @@ class AppController(QObject):
             device.state = state
             device.connected = state is ConnectionState.CONNECTED
             if state is ConnectionState.CONNECTED:
-                device.paired = True
                 if not device.metadata.get("demo"):
                     self.settings_store.remember_device(device)
                     self.settings_store.save()
@@ -532,6 +536,8 @@ class AppController(QObject):
         self.connections.toggle_notify(address, uuid)
 
     def _on_value_received(self, address: str, uuid: str, data: object, source: str) -> None:
+        if len(data) > MAX_GATT_BYTES or (source == "notify" and not self._value_rate.allow(address)):
+            return
         payload = bytes(data) if not isinstance(data, bytes) else data
         self.gatt_value.emit(address, uuid, payload, source)
         self.log(
@@ -644,21 +650,21 @@ class AppController(QObject):
         data: str = "",
     ) -> None:
         entry = LogEntry(level=level, message=message, address=address, category=category, data=data)
-        self.log_store.add(entry)
+        entry = self.log_store.add(entry)
         self.log_entry.emit(entry)
         if os.environ.get("BLUEDESK_DEBUG"):
             print("[%s] %-5s %-8s %s" % (time.strftime("%H:%M:%S"), level, category, message))
             sys.stdout.flush()
 
-    def export_logs(self, path: str) -> None:
+    def export_logs(self, path: str, include_sensitive: bool = False) -> None:
         target = Path(path)
         suffix = target.suffix.lower()
         if suffix == ".csv":
-            self.log_store.export_csv(target)
+            self.log_store.export_csv(target, include_sensitive)
         elif suffix == ".json":
-            self.log_store.export_json(target)
+            self.log_store.export_json(target, include_sensitive)
         else:
-            self.log_store.export_text(target)
+            self.log_store.export_text(target, include_sensitive)
         self.log("INFO", "日志已导出：%s" % target, category="log")
         self.status_message.emit("日志已导出")
 
@@ -670,6 +676,7 @@ class AppController(QObject):
     def shutdown(self) -> None:
         self._closed = True
         self._paired_timer.stop()
+        self._prune_timer.stop()
         try:
             self.stop_scan()
         except Exception:

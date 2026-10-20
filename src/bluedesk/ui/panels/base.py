@@ -7,12 +7,12 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
-    QLabel,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
 
+from ..widgets import PlainLabel as QLabel
 from ...controller import AppController
 from ...models import DeviceCapabilities, DeviceInfo, Telemetry, capabilities_for
 from ...protocols import FeatureStatus

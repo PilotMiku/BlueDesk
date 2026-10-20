@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QGridLayout, QHBoxLayout, QLabel, QVBoxLayout
+from PySide6.QtWidgets import QApplication, QGridLayout, QHBoxLayout, QVBoxLayout
 
+from ..widgets import PlainLabel as QLabel
 from ...models import DeviceInfo, Telemetry
 from ..widgets import Card, MetricTile, clear_layout, make_button, make_pill
 from .base import ControlPanel, InfoRow

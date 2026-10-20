@@ -4,7 +4,7 @@
 
 BlueDesk 是一个面向 **Windows 10/11** 与 **macOS** 的桌面蓝牙设备管理工具。它使用 Python 3 + PySide6 构建 UI，使用 Bleak 统一访问 BLE，通过平台适配层处理 Windows PnP、macOS system_profiler/blueutil、系统音量与媒体控制，并按识别出的设备类型自动切换控制面板。
 
-macOS 兼容性说明：Bleak/CoreBluetooth 路径支持 macOS 10.15+；当前开发环境使用 PySide6 6.8（官方面向较新的 macOS）。如果必须在 macOS 10.15 上运行，请使用 PySide6 6.4.x，并在真机验证 UI 与打包产物。
+当前版本要求 **Python 3.11+**，并提高依赖版本下限以包含已知漏洞修复。本次验证环境为 macOS + Python 3.14 + PySide6 6.12；其他系统的兼容性以所选 Qt/Python 版本要求为准。启动脚本不会回退到旧的 Python 3.9 环境。
 
 项目不仅是一份设计文档，还包含可运行的完整实现、演示模式、自动化测试与平台差异说明。
 
@@ -23,7 +23,7 @@ macOS 兼容性说明：Bleak/CoreBluetooth 路径支持 macOS 10.15+；当前�
 | 系统音量 / 静音 / 媒体按键 | 已实现 | macOS osascript；Windows pycaw / 媒体虚拟键 |
 | BLE GATT 浏览 / 读 / 写 / 通知 | 已实现 | 含 HEX/文本、服务树、数据输出 |
 | 标准电量 / 心率 / 固件读取 | 已实现 | Battery 0x2A19、Heart Rate 0x2A37、Device Info 0x180A |
-| 日志与 CSV / JSON / TXT 导出 | 已实现 | 内存环形缓冲 + JSONL 持久化 |
+| 日志与 CSV / JSON / TXT 导出 | 已实现 | 会话详情有容量限制；磁盘和默认导出脱敏，文件轮转；完整导出需主动勾选 |
 | 系统连接 / 断开 | macOS 已实现 | 原生 IOBluetooth 控制已配对设备；blueutil 可选；新设备配对和 Windows 经典蓝牙仍使用系统设置 |
 | 设备级 EQ / DPI / 背光 / 按键映射 | 需厂商协议 | 提供完整 UI 占位、协议接口和示例数据帧，默认不向未知设备写入 |
 | 经典蓝牙 RFCOMM / SPP | 未内置 | PyBluez 兼容性差；保留协议适配接口，推荐 Qt/C# 方案 |
@@ -170,6 +170,7 @@ src/bluedesk/
 ├── codecs.py                 # HEX/文本、校验、DPI 示例帧、电量/心率解析
 ├── ble_uuids.py              # 常用服务/特征值名称
 ├── settings.py               # 设置持久化、JSONL 日志、导出
+├── security.py               # 数据容量与输入速率限制
 ├── demo.py                   # 演示设备、服务、遥测
 ├── protocols/
 │   ├── base.py               # FeatureStatus / ProtocolAdapter
@@ -352,6 +353,9 @@ FeatureStatus 进一步区分：
 
 - 设置文件：应用数据目录 settings.json。
 - 日志文件：应用数据目录 bluedeck.jsonl。
+- 通信详情仅保留在本次会话，磁盘日志隐藏名称、地址、消息内容及原始数据；设备地址使用会话随机密钥生成的匿名标识。
+- 单个磁盘日志最多 1 MiB，保留 2 个轮转备份。首次写入时会脱敏现有日志和这两个备份。
+- 日志、设置和导出文件在 POSIX 系统以 0600 权限写入。完整敏感导出需要在日志面板主动勾选。
 - macOS：~/Library/Application Support/BlueDesk
 - Windows：%APPDATA%/BlueDesk
 - 支持 BLUEDESK_DATA_DIR 环境变量覆盖（测试与便携模式）。
@@ -448,7 +452,8 @@ def decode_class_of_device(cod: int) -> tuple[int, int, int]:
 ### 5.6 设备合并
 
 - BLE 扫描与系统配对列表在 macOS 上地址类型不同，无法直接按地址合并。
-- AppController 在只有一个候选匹配时按“大小写不敏感的完整名称”合并系统配对记录与 BLE 记录；保留主键和独立的系统 MAC、BLE UUID。同名的两台系统设备不会合并。
+- AppController 只按地址更新同一条记录，不再根据名称合并。广播名称、厂商 ID 和服务 UUID 都不能证明设备身份。
+- 不同地址的同名设备分别展示，不会继承对方的配对状态或覆盖连接目标。连接始终使用所选记录自身的地址，旧版本保存的跨地址别名会被忽略。
 - 如果系统配对设备的名称与 BLE 广播名称不同，可能显示为两个条目。这是 macOS 没有公开 CoreBluetooth UUID 与 MAC 映射导致的平台限制。
 
 ---
@@ -930,7 +935,7 @@ MainWindow
 
 ### 10.1 平台支持矩阵
 
-| 项目 | Windows 10/11 | macOS 10.15+（Qt 版本见下方说明） |
+| 项目 | Windows 10/11 | macOS（受所选 Qt 版本要求限制） |
 | --- | --- | --- |
 | BLE 扫描 | Bleak / WinRT | Bleak / CoreBluetooth |
 | BLE GATT | 支持 | 支持 |
@@ -945,8 +950,8 @@ MainWindow
 
 ### 10.2 Python 依赖与版本
 
-- Python 3.9+；推荐 3.10–3.12。
-- PySide6 >= 6.4。macOS 12+ 可用 6.8.x；macOS 10.15 需要 6.4.x 并在真机验证。
+- Python 3.11+；本次实际验证 Python 3.14。
+- PySide6 >= 6.10.3；本次实际验证 6.12.0。
 - Bleak >= 0.22。
 - Windows 可选：pycaw、comtypes。
 - 不依赖 PyBluez。
@@ -988,8 +993,8 @@ MainWindow
 - Windows 经典/BLE 通常使用 MAC；macOS BLE 使用 CoreBluetooth UUID。
 - BLE 随机地址会变化，不能用 MAC 作为永久身份。
 - macOS system_profiler 不一定提供 CoreBluetooth UUID，导致同一设备可能以“系统配对条目”和“BLE 广播条目”出现两次。
-- 应用按名称做二级合并，但不能保证 100% 合并。
-- 建议未来引入“设备指纹”（名称 + 厂商 ID + 服务集合 + 用户确认）作为持久身份。
+- 应用不会按名称、厂商 ID 或服务集合跨地址合并；这些广播字段不具备身份认证能力。
+- 同一物理设备的系统记录与 BLE 记录可能分开展示，GATT 连接成功也不会被标记为系统已配对。
 
 ### 10.6 音量与媒体控制的真实语义
 
@@ -1005,7 +1010,13 @@ MainWindow
 
 - 不向未知设备自动发送厂商写指令。
 - 写入前由用户选择特征值；GATT 页面有风险提示。
-- 日志可能包含设备地址与数据，导出前应提醒用户脱敏。
+- 会话详情默认不原样落盘；磁盘日志和默认导出脱敏。勾选完整导出后应妥善保管文件。
+- 最多保存 512 台设备；非配对、未连接且未选中的附近设备在 120 秒后过期。扫描信号最多 100 次/秒、每地址 2 次/秒。
+- 通知在进入 Qt 队列前限制为每设备 20 次/秒、总计 100 次/秒。GATT 单条数据最多 512 字节、最多 64 个服务和 512 个特征值；输出保留最多 500 个文本块。
+- 超出限制的数据会丢弃；当前实现不适合要求无丢包的高频采集。
+- 设备名称和遥测字段按纯文本显示；CSV 导出防止公式注入。
+- macOS/Python 3.14 的精确依赖版本及 SHA256 哈希见 `pylock.macos-py314.toml`；该锁文件不适用于其他平台和 Python 版本。生成和安装锁文件使用当前 pip 的实验性锁格式支持。
+- GitHub Actions 会在 push/PR 时对 macOS、Windows 和 Python 3.12/3.14 运行测试及依赖漏洞扫描；工作流依赖的 Action 固定到提交哈希。
 - 经典蓝牙连接调用系统 IOBluetooth / blueutil，不绕过配对。
 - 后台线程异常不会直接崩溃 UI；错误写入日志并更新状态。
 - 设置/日志目录不可写时应用继续工作，不阻塞启动。
@@ -1135,7 +1146,18 @@ QT_QPA_PLATFORM=offscreen python -m bluedesk --screenshot artifacts/overview.png
 
 ~~~bash
 python -m pytest -q
+python -m pip_audit --skip-editable
 ~~~
+
+重建本次 macOS/Python 3.14 依赖环境时，可先升级 pip，再安装锁文件和本项目：
+
+~~~bash
+python -m pip install --upgrade "pip>=26.2"
+python -m pip install -r pylock.macos-py314.toml
+python -m pip install --no-deps -e .
+~~~
+
+其他平台使用 `python -m pip install -e ".[dev]"`，再运行测试和漏洞扫描。
 
 当前测试覆盖：
 

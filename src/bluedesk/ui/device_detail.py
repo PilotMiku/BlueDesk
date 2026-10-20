@@ -8,7 +8,6 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QInputDialog,
-    QLabel,
     QMenu,
     QPushButton,
     QScrollArea,
@@ -18,6 +17,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .widgets import PlainLabel as QLabel
 from ..controller import AppController
 from ..models import ConnectionState, DeviceInfo, DeviceType, Telemetry, rssi_to_bars
 from .gatt_browser import GattBrowser

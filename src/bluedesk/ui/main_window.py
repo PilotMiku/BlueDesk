@@ -11,7 +11,6 @@ from PySide6.QtWidgets import (
     QApplication,
     QFrame,
     QHBoxLayout,
-    QLabel,
     QMainWindow,
     QPushButton,
     QSplitter,
@@ -21,6 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .widgets import PlainLabel as QLabel
 from ..controller import AppController
 from ..models import DeviceInfo
 from ..settings import app_data_dir
@@ -201,7 +201,8 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------
     def _schedule_refresh(self) -> None:
-        self._refresh_timer.start()
+        if not self._refresh_timer.isActive():
+            self._refresh_timer.start()
 
     def _refresh_devices(self) -> None:
         devices = self.controller.filtered_devices(

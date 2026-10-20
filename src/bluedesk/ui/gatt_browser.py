@@ -5,12 +5,11 @@ import time
 from typing import Dict, List, Optional, Set, Tuple
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QTextCursor
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QHBoxLayout,
-    QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
@@ -21,10 +20,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .widgets import PlainLabel as QLabel
 from ..ble_uuids import compact_uuid, describe_characteristic, describe_service
 from ..codecs import CodecError, encode_payload, format_hex, hexdump
 from ..controller import AppController
 from ..models import DeviceInfo, GattCharacteristicInfo, GattServiceInfo
+from ..security import MAX_GATT_BYTES, MAX_OUTPUT_BLOCKS
 from .widgets import clear_layout, make_button, make_pill
 
 
@@ -92,6 +93,7 @@ class GattBrowser(QWidget):
         self.mode.setFixedWidth(82)
         editor.addWidget(self.mode)
         self.input = QLineEdit()
+        self.input.setMaxLength(MAX_GATT_BYTES * 3)
         self.input.setPlaceholderText("写入数据，例如 01 02 FF 或文本内容…")
         editor.addWidget(self.input, 1)
         self.with_response = QCheckBox("带响应")
@@ -109,6 +111,7 @@ class GattBrowser(QWidget):
         layout.addLayout(editor)
 
         self.output = QTextBrowser()
+        self.output.document().setMaximumBlockCount(MAX_OUTPUT_BLOCKS)
         self.output.setOpenExternalLinks(False)
         self.output.setMinimumHeight(78)
         self.output.setMaximumHeight(112)
@@ -267,6 +270,8 @@ class GattBrowser(QWidget):
         if not self.device or address != self.device.address:
             return
         payload = bytes(data) if not isinstance(data, bytes) else data
+        if len(payload) > MAX_GATT_BYTES:
+            return
         stamp = time.strftime("%H:%M:%S")
         if source == "notify":
             text = "%s  通知  %s\n%s" % (stamp, compact_uuid(uuid), hexdump(payload))
@@ -280,5 +285,6 @@ class GattBrowser(QWidget):
                 text += "\n文本: %s" % as_text
         except UnicodeDecodeError:
             pass
-        self.output.append(text)
+        self.output.moveCursor(QTextCursor.End)
+        self.output.insertPlainText(text + "\n")
         self.status.setText("最近数据：%s · %s" % (source, format_hex(payload)))

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from itertools import islice
 from typing import Optional
 
 from PySide6.QtCore import QObject, Signal
@@ -15,6 +16,7 @@ from PySide6.QtCore import QObject, Signal
 from .classifier import explain_device
 from .models import DeviceInfo, Transport
 from .async_runner import AsyncRunner
+from .security import MAX_NAME_CHARS, RateLimiter
 
 try:
     from bleak import BleakScanner
@@ -61,6 +63,9 @@ class ScanService(QObject):
         self._scanner = None
         self._stop_event: Optional[asyncio.Event] = None
         self._stop_requested = False
+        self._advertisement_rate = RateLimiter(2)
+        self._total_rate = RateLimiter(100, max_keys=1)
+        self._error_rate = RateLimiter(1, max_keys=1)
 
     @property
     def active(self) -> bool:
@@ -128,22 +133,24 @@ class ScanService(QObject):
     def _on_detection(self, device, advertisement_data=None) -> None:
         try:
             address = getattr(device, "address", "") or ""
-            if not address:
+            if not address or len(address) > 128:
+                return
+            if not self._total_rate.allow("scan") or not self._advertisement_rate.allow(address):
                 return
             adv = advertisement_data
             local_name = getattr(adv, "local_name", "") or ""
-            name = local_name or getattr(device, "name", "") or ""
+            name = (local_name or getattr(device, "name", "") or "")[:MAX_NAME_CHARS]
             rssi = getattr(adv, "rssi", None)
             if rssi is None:
                 rssi = getattr(device, "rssi", None)
-            service_uuids = [str(u) for u in (getattr(adv, "service_uuids", None) or [])]
+            service_uuids = [str(u)[:128] for u in (getattr(adv, "service_uuids", None) or [])[:64]]
             manufacturer = {
-                int(key): bytes(value)
-                for key, value in (getattr(adv, "manufacturer_data", None) or {}).items()
+                int(key): bytes(value[:512])
+                for key, value in islice((getattr(adv, "manufacturer_data", None) or {}).items(), 16)
             }
             service_data = {
-                str(key): bytes(value)
-                for key, value in (getattr(adv, "service_data", None) or {}).items()
+                str(key)[:128]: bytes(value[:512])
+                for key, value in islice((getattr(adv, "service_data", None) or {}).items(), 16)
             }
             appearance = getattr(adv, "appearance", None)
             tx_power = getattr(adv, "tx_power", None)
@@ -176,4 +183,5 @@ class ScanService(QObject):
             )
             self.device_found.emit(info)
         except Exception as exc:
-            self.error.emit("解析 BLE 广播失败：%s" % exc)
+            if self._error_rate.allow("parse"):
+                self.error.emit("解析 BLE 广播失败：%s" % str(exc)[:512])
