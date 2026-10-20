@@ -185,7 +185,7 @@ def test_logs_are_private_redacted_and_rotated(tmp_path):
     paths = list(tmp_path.glob("log.jsonl*"))
     assert len(paths) == 3
     for path in paths:
-        raw = path.read_text()
+        raw = path.read_text(encoding="utf-8")
         assert path.stat().st_size <= 1024
         assert "AA:BB:CC:DD:EE:FF" not in raw
         assert "secret-device-and-content" not in raw
@@ -200,12 +200,12 @@ def test_legacy_logs_and_backups_are_sanitized(tmp_path):
     path = tmp_path / "log.jsonl"
     legacy = json.dumps({"privacy_version": 1, "time": 1, "level": "DATA", "category": "data",
         "address": "SECRET-ADDRESS", "message": "PRIVATE MESSAGE", "data": "SECRET-PAYLOAD"}) + "\n"
-    path.write_text(legacy)
-    path.with_name("log.jsonl.1").write_text(legacy)
+    path.write_text(legacy, encoding="utf-8")
+    path.with_name("log.jsonl.1").write_text(legacy, encoding="utf-8")
     store = LogStore(path)
     store.add(LogEntry(level="INFO", message="new"))
     for p in tmp_path.glob("log.jsonl*"):
-        content = p.read_text()
+        content = p.read_text(encoding="utf-8")
         assert not any(secret in content for secret in ("SECRET-ADDRESS", "PRIVATE MESSAGE", "SECRET-PAYLOAD"))
 
 
@@ -216,9 +216,9 @@ def test_exports_default_to_redaction_and_require_explicit_sensitive_option(tmp_
     export = getattr(store, "export_" + kind)
     path = tmp_path / ("export." + kind)
     export(path)
-    assert "PRIVATE-" not in path.read_text()
+    assert "PRIVATE-" not in path.read_text(encoding="utf-8")
     export(path, include_sensitive=True)
-    assert "PRIVATE-MESSAGE" in path.read_text()
+    assert "PRIVATE-MESSAGE" in path.read_text(encoding="utf-8")
     if os.name == "posix":
         assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
@@ -228,19 +228,45 @@ def test_sensitive_csv_export_neutralizes_formulas(tmp_path):
     store.add(LogEntry(level="INFO", message='=HYPERLINK("https://example.invalid")'))
     path = tmp_path / "out.csv"
     store.export_csv(path, include_sensitive=True)
-    rows = list(csv.reader(path.open()))
+    with path.open(encoding="utf-8", newline="") as handle:
+        rows = list(csv.reader(handle))
+    assert len(rows) == 2
     assert rows[1][5].startswith("'=")
+
+
+def test_csv_export_preserves_records_with_windows_newline_translation(tmp_path, monkeypatch):
+    original_fdopen = os.fdopen
+
+    def windows_fdopen(fd, mode="r", *args, **kwargs):
+        # Emulate Windows' default translation even when this test runs on macOS.
+        if "b" not in mode:
+            kwargs.setdefault("newline", "\r\n")
+        return original_fdopen(fd, mode, *args, **kwargs)
+
+    monkeypatch.setattr(os, "fdopen", windows_fdopen)
+    store = LogStore(tmp_path / "log.jsonl")
+    message = '中文消息，包含 "引号"\n第二行'
+    store.add(LogEntry(level="INFO", message=message))
+    path = tmp_path / "out.csv"
+    store.export_csv(path, include_sensitive=True)
+
+    assert b"\r\r\n" not in path.read_bytes()
+    with path.open(encoding="utf-8", newline="") as handle:
+        rows = list(csv.reader(handle))
+    assert len(rows) == 2
+    assert len(rows[1]) == len(rows[0]) == 7
+    assert rows[1][5] == message
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX symlink semantics")
 def test_log_symlink_cannot_overwrite_target(tmp_path):
     target = tmp_path / "important"
-    target.write_text("untouched")
+    target.write_text("untouched", encoding="utf-8")
     path = tmp_path / "log.jsonl"
     path.symlink_to(target)
     store = LogStore(path)
     store.add(LogEntry(level="INFO", message="entry"))
-    assert target.read_text() == "untouched"
+    assert target.read_text(encoding="utf-8") == "untouched"
     assert len(store.entries) == 1
 
 
@@ -249,6 +275,6 @@ def test_saved_device_does_not_persist_payloads_or_aliases(tmp_path):
     store.remember_device(DeviceInfo(address="target", name="name", manufacturer_data={1: b"SECRET"},
         metadata={"ble_address": "IMPOSTOR", "system_info": {"serial": "PRIVATE"}}))
     store.save()
-    raw = store.path.read_text()
+    raw = store.path.read_text(encoding="utf-8")
     assert not any(secret in raw for secret in ("SECRET", "IMPOSTOR", "PRIVATE", "534543524554"))
     assert store.recent_devices()[0].address == "target"

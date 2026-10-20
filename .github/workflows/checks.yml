@@ -35,5 +35,5 @@ jobs:
           python -m pip install --upgrade "pip>=26.2" "setuptools>=83.0.0" "wheel>=0.46.2"
           python -m pip install -e ".[dev]"
           python -m pip check
-          python -m pytest -q
+          python -X warn_default_encoding -m pytest -q -W error::EncodingWarning
           python -m pip_audit --skip-editable

@@ -25,7 +25,7 @@ def test_settings_round_trip(tmp_path):
 
 def test_settings_save_survives_unwritable_path(tmp_path):
     blocker = tmp_path / "file"
-    blocker.write_text("x")
+    blocker.write_text("x", encoding="utf-8")
     store = SettingsStore(blocker / "settings.json")
     store.save()  # must not raise
     assert store.last_error

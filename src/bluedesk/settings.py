@@ -157,7 +157,9 @@ def private_write(path: Path, text: str) -> None:
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(prefix="bluedesk-", dir=path.parent)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        # Preserve csv.writer's CRLF verbatim. Windows text-mode translation
+        # would turn it into CRCRLF and introduce empty CSV records.
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
             handle.write(text)
         os.replace(temporary, path)
     finally:
