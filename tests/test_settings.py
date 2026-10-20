@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import json
 
-from bluedeck.models import DeviceInfo, DeviceType, LogEntry
-from bluedeck.settings import LogStore, SettingsStore
+from bluedesk.models import DeviceInfo, DeviceType, LogEntry
+from bluedesk.settings import LogStore, SettingsStore
 
 
 def test_settings_round_trip(tmp_path):

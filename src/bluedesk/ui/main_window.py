@@ -29,7 +29,7 @@ from .device_detail import DeviceDetail
 from .device_list import Sidebar
 from .icons import make_app_icon
 from .theme import ACCENT, MUTED, apply_theme
-from .widgets import EmptyState, StatusDot, make_button, make_pill
+from .widgets import EmptyState, StatusDot, make_button, make_pill, repolish
 
 
 class MainWindow(QMainWindow):
@@ -97,10 +97,7 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
         self._update_scan_ui(False, "准备就绪")
-        if self.controller.demo_mode:
-            self.demo_pill.setVisible(True)
-            self.demo_btn.setVisible(False)
-            self.sidebar.set_demo_visible(True)
+        self._update_mode(self.controller.demo_mode)
 
     # ------------------------------------------------------------------
     def _build_topbar(self) -> QWidget:
@@ -147,7 +144,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.scan_btn)
         self.demo_btn = make_button("演示数据", "ghost")
         self.demo_btn.setToolTip("加载模拟设备，不需要蓝牙权限")
-        self.demo_btn.clicked.connect(self._load_demo)
+        self.demo_btn.clicked.connect(self._toggle_mode)
         layout.addWidget(self.demo_btn)
         self.settings_btn = QPushButton("系统蓝牙")
         self.settings_btn.setProperty("variant", "ghost")
@@ -189,6 +186,8 @@ class MainWindow(QMainWindow):
         self.controller.status_message.connect(self._show_status)
         self.controller.operation_finished.connect(self._operation_finished)
         self.controller.volume_changed.connect(lambda _value: None)
+        self.controller.mode_changed.connect(self._update_mode)
+        self.controller.scan_service.error.connect(self._show_scan_error)
 
         self._refresh_timer = QTimer(self)
         self._refresh_timer.setSingleShot(True)
@@ -257,6 +256,13 @@ class MainWindow(QMainWindow):
         self.status_label.setStyleSheet("color: #a9c6ff;")
         self._status_timer.start(6000)
 
+    def _show_scan_error(self, message: str) -> None:
+        self._status_timer.stop()
+        self.status_label.setText(message)
+        self.status_label.setWordWrap(True)
+        self.status_label.setStyleSheet("color: #ff8a7a;")
+        self.status_label.setToolTip(message)
+
     def _reset_status(self) -> None:
         self.status_label.setText("BlueDesk 已就绪")
         self.status_label.setStyleSheet("")
@@ -270,11 +276,26 @@ class MainWindow(QMainWindow):
 
     def _load_demo(self) -> None:
         self.controller.load_demo_devices(auto_connect=True)
-        self.demo_pill.setVisible(True)
-        self.demo_btn.setVisible(False)
-        self.sidebar.set_demo_visible(True)
         self._show_status("演示数据已加载")
         QTimer.singleShot(800, self._demo_tick)
+
+    def _toggle_mode(self) -> None:
+        if self.controller.demo_mode:
+            self.controller.use_real_devices()
+        else:
+            self._load_demo()
+
+    def _update_mode(self, demo: bool) -> None:
+        self.demo_pill.setVisible(True)
+        self.demo_pill.setText("演示模式" if demo else "真实设备")
+        self.demo_pill.setProperty("tone", "amber" if demo else "green")
+        repolish(self.demo_pill)
+        self.demo_btn.setVisible(True)
+        self.demo_btn.setText("使用真实设备" if demo else "演示数据")
+        self.demo_btn.setToolTip("退出演示并扫描真实设备" if demo else "查看模拟设备")
+        self.sidebar.set_demo_visible(demo)
+        self.scan_btn.setText("退出演示并扫描" if demo else "扫描设备")
+        self._show_status("演示模式：设备与数据为模拟值" if demo else "真实设备模式：正在读取系统设备")
 
     def _demo_tick(self) -> None:
         if not self.controller.demo_mode:

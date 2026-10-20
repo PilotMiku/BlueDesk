@@ -13,4 +13,4 @@ else
 fi
 
 export PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
-exec "$PYTHON" -m bluedeck "$@"
+exec "$PYTHON" -m bluedesk "$@"

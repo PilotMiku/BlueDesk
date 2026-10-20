@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from bluedeck.codecs import (
+from bluedesk.codecs import (
     CodecError,
     build_dpi_packet,
     checksum8_xor,

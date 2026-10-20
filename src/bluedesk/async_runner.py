@@ -22,7 +22,7 @@ class AsyncRunner:
         if self._thread and self._thread.is_alive():
             return
         self._ready.clear()
-        self._thread = threading.Thread(target=self._run, name="bluedeck-asyncio", daemon=True)
+        self._thread = threading.Thread(target=self._run, name="bluedesk-asyncio", daemon=True)
         self._thread.start()
         self._ready.wait(timeout=5.0)
 

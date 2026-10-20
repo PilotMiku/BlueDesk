@@ -23,6 +23,7 @@ from .models import (
     normalize_name,
 )
 from .platform import PlatformAdapter, PlatformError, get_platform
+from .platform.parsers import system_telemetry
 from .protocols import ProtocolRegistry
 from .scan_service import ScanService
 from .settings import AppSettings, LogStore, SettingsStore
@@ -40,6 +41,7 @@ class AppController(QObject):
     operation_finished = Signal(str, bool)
     volume_changed = Signal(int)
     gatt_value = Signal(str, str, object, str)
+    mode_changed = Signal(bool)
 
     _paired_result = Signal(object, str)
 
@@ -62,9 +64,12 @@ class AppController(QObject):
         self._services: Dict[str, list] = {}
         self._selected_key = ""
         self._demo_mode = False
+        self._mode_generation = 0
         self._demo_volume = 68
+        self._paired_loading = False
+        self._closed = False
         self._executor = concurrent.futures.ThreadPoolExecutor(
-            max_workers=3, thread_name_prefix="bluedeck-io"
+            max_workers=3, thread_name_prefix="bluedesk-io"
         )
         self._runner = AsyncRunner()
         self._runner.start()
@@ -82,14 +87,21 @@ class AppController(QObject):
         self.connections.log.connect(self._on_manager_log)
         self._paired_result.connect(self._on_paired_loaded)
 
-        if demo_mode or self.settings.demo_mode:
+        # Demo is an explicit, session-only choice. Old settings cannot trap
+        # a normal launch in simulation mode.
+        self.settings.demo_mode = False
+        self._paired_timer = QTimer(self)
+        self._paired_timer.setInterval(10000)
+        self._paired_timer.timeout.connect(self.load_paired_async)
+        self._paired_timer.start()
+        if demo_mode:
             self.load_demo_devices(auto_connect=True)
         else:
             self._load_recent()
             self.load_paired_async()
             should_scan = self.settings.auto_scan if auto_scan is None else auto_scan
             if should_scan:
-                QTimer.singleShot(1200, self.start_scan)
+                QTimer.singleShot(1200, self._start_initial_scan)
 
         self.log("INFO", "BlueDesk 已启动 · %s" % self.platform.system, category="app")
         hint = self.platform.permission_hint()
@@ -151,7 +163,14 @@ class AppController(QObject):
         return result
 
     def device(self, address: str) -> Optional[DeviceInfo]:
-        return self._devices.get((address or "").strip().lower())
+        key = (address or "").strip().lower()
+        direct = self._devices.get(key)
+        if direct is not None or not key:
+            return direct
+        return next((device for device in self._devices.values() if key in (
+            str(device.metadata.get("ble_address", "")).lower(),
+            str(device.metadata.get("system_address", "")).lower(),
+        )), None)
 
     def telemetry_for(self, address: str) -> Optional[Telemetry]:
         return self._telemetry.get(address)
@@ -176,6 +195,8 @@ class AppController(QObject):
     # ------------------------------------------------------------------
     def _load_recent(self) -> None:
         for recent in self.settings_store.recent_devices():
+            if recent.metadata.get("demo") or recent.address.startswith("demo:"):
+                continue
             if recent.address and recent.address not in self._devices:
                 recent.connected = False
                 recent.state = ConnectionState.DISCONNECTED
@@ -183,6 +204,9 @@ class AppController(QObject):
                 self._devices[recent.key] = recent
 
     def load_paired_async(self) -> None:
+        if self._demo_mode or self._paired_loading or self._closed:
+            return
+        self._paired_loading = True
         future = self._executor.submit(self.platform.paired_devices)
         future.add_done_callback(self._paired_done)
 
@@ -194,36 +218,64 @@ class AppController(QObject):
             self._paired_result.emit([], str(exc))
 
     def _on_paired_loaded(self, devices: list, error: str) -> None:
+        self._paired_loading = False
+        if self._demo_mode or self._closed:
+            return
         if error:
             self.log("WARN", "读取系统配对设备失败：%s" % error, category="platform")
         count = 0
         for device in devices or []:
+            device.metadata["system_address"] = device.address
             if self._upsert(device):
                 count += 1
+            existing = self.device(device.address)
+            if existing is not None:
+                if not self.connections.has_gatt_connection(existing.address) and not self.connections.is_pending(existing.address):
+                    existing.connected = device.connected
+                    existing.state = device.state
+                    self.connections.sync_system_state(existing.address, device.connected)
+                if device.connected:
+                    self._on_telemetry(existing.address, system_telemetry(device.metadata.get("system_info", {})))
+                elif not self.connections.has_gatt_connection(existing.address):
+                    self._telemetry.pop(existing.address, None)
+                self.device_updated.emit(existing)
         if count:
             self.log("INFO", "已加载 %d 个系统配对设备" % count, category="platform")
             self.devices_changed.emit()
+        self.select_default_if_available()
 
     def _upsert(self, incoming: DeviceInfo) -> bool:
         key = incoming.key
         existing = self._devices.get(key)
-        if existing is None and incoming.name:
+        if incoming.name and (existing is None or (
+            incoming.source == "bleak" and existing.source == "bleak"
+            and not self.connections.has_gatt_connection(existing.address)
+            and not self.connections.is_pending(existing.address)
+        )):
             # A BLE scan and the system paired list expose different addresses
             # on macOS. Merge by exact (case-insensitive) name only when one
             # side is known to be paired, so two nearby same-name devices are
             # not collapsed into one.
-            for candidate in self._devices.values():
+            candidates = [candidate for candidate in self._devices.values()
                 if (
                     candidate.name
                     and normalize_name(candidate.name) == normalize_name(incoming.name)
                     and (candidate.paired or incoming.paired)
-                ):
-                    existing = candidate
-                    break
+                    and (candidate.source == "bleak") != (incoming.source == "bleak")
+                )]
+            if len(candidates) == 1:
+                candidate = candidates[0]
+                if existing is not None and existing is not candidate:
+                    # A first advertisement can be unnamed. Merge the old
+                    # placeholder once its later advertisements expose a name.
+                    candidate.merge(existing)
+                    self._devices.pop(existing.key, None)
+                    if self._selected_key == existing.key:
+                        self._selected_key = candidate.key
+                        self.selection_changed.emit(candidate)
+                existing = candidate
         if existing is None:
             self._devices[key] = incoming
-            if incoming.connected:
-                self._selected_key = self._selected_key or key
             return True
         changed = existing.merge(incoming)
         if changed:
@@ -234,6 +286,8 @@ class AppController(QObject):
         return changed
 
     def _on_device_found(self, device: DeviceInfo) -> None:
+        if self._demo_mode or self._closed:
+            return
         if device.source == "bleak" and device.address:
             # Keep the CoreBluetooth UUID even if this record is later merged
             # with a macOS classic/system entry that has a different address.
@@ -243,7 +297,12 @@ class AppController(QObject):
             device.paired = True
         self._upsert(device)
         if not self._selected_key and device.rssi is not None and device.name.strip():
-            self._selected_key = self._devices[device.key].key
+            merged = self.device(device.address) or next(
+                (d for d in self._devices.values() if d.metadata.get("ble_address") == device.address), None
+            )
+            if merged is None:
+                return
+            self._selected_key = merged.key
             self.selection_changed.emit(self.selected)
         self.devices_changed.emit()
 
@@ -252,7 +311,8 @@ class AppController(QObject):
         if device is None:
             return
         self._selected_key = device.key
-        self.settings.last_selected = device.address
+        if not device.metadata.get("demo"):
+            self.settings.last_selected = device.address
         self.selection_changed.emit(device)
 
     def select_default_if_available(self) -> None:
@@ -267,10 +327,16 @@ class AppController(QObject):
             device = self.device(self.settings.last_selected)
             if device:
                 self.select(device.address)
+                return
+        if self.devices():
+            self.select(self.devices()[0].address)
 
     def set_default_device(self, address: str) -> None:
         device = self.device(address)
         if device is None:
+            return
+        if device.metadata.get("demo"):
+            self.status_message.emit("请在真实设备模式中设置默认设备")
             return
         self.settings.default_device = device.address
         if not device.metadata.get("demo"):
@@ -290,7 +356,12 @@ class AppController(QObject):
         if self._demo_mode:
             return
         self._demo_mode = True
+        self._mode_generation += 1
         self.stop_scan()
+        self._devices.clear()
+        self._telemetry.clear()
+        self._services.clear()
+        self._selected_key = ""
         for device in demo_devices():
             self._upsert(device)
         self.log("INFO", "演示模式已启用：设备与数据均为模拟值", category="demo")
@@ -298,8 +369,38 @@ class AppController(QObject):
         if devices:
             self.select(devices[0].address)
             if auto_connect:
-                QTimer.singleShot(700, lambda: self.connect_device(devices[0].address))
+                generation = self._mode_generation
+                QTimer.singleShot(700, lambda: self.connect_device(devices[0].address)
+                    if self._demo_mode and generation == self._mode_generation and not self._closed else None)
         self.devices_changed.emit()
+        self.mode_changed.emit(True)
+
+    def use_real_devices(self, scan: bool = True) -> None:
+        if self._demo_mode:
+            self._demo_mode = False
+            self._mode_generation += 1
+            self.connections.clear_demo()
+            self._devices.clear()
+            self._telemetry.clear()
+            self._services.clear()
+            self._selected_key = ""
+            self.selection_changed.emit(None)
+            self._load_recent()
+            self.devices_changed.emit()
+            self.mode_changed.emit(False)
+            self.log("INFO", "已切换至真实设备模式", category="app")
+        self.load_paired_async()
+        if scan:
+            # Let any previous scanner finish stopping before restarting.
+            self._restart_real_scan()
+
+    def _restart_real_scan(self) -> None:
+        if self._demo_mode or self._closed:
+            return
+        if self.scan_service.active:
+            QTimer.singleShot(300, self._restart_real_scan)
+        else:
+            self.start_scan()
 
     def simulate_rssi(self) -> None:
         for device in self._devices.values():
@@ -310,10 +411,15 @@ class AppController(QObject):
     # ------------------------------------------------------------------
     # scanning
     # ------------------------------------------------------------------
+    def _start_initial_scan(self) -> None:
+        if not self._demo_mode and not self._closed:
+            self.start_scan()
+
     def start_scan(self) -> None:
         if self._demo_mode:
-            self.status_message.emit("演示模式不会进行真实扫描")
+            self.use_real_devices()
             return
+        self.load_paired_async()
         self.log("INFO", "开始 BLE 扫描", category="scan")
         self.scan_service.start()
 
@@ -393,6 +499,10 @@ class AppController(QObject):
         self.log("INFO", "GATT 服务已更新：%d 个服务" % len(services), address=address, category="gatt")
 
     def _on_telemetry(self, address: str, telemetry: Telemetry) -> None:
+        if self.device(address) is None:
+            return
+        if self.device(address).metadata.get("demo"):
+            telemetry.extra["battery_source"] = "演示数据"
         existing = self._telemetry.get(address)
         if existing is None:
             self._telemetry[address] = telemetry
@@ -405,6 +515,8 @@ class AppController(QObject):
         if device is None:
             return
         self.connections.refresh_telemetry(device)
+        if not device.metadata.get("demo") and not self.connections.has_gatt_connection(address):
+            self.load_paired_async()
         self.log("INFO", "刷新遥测数据", address=address, category="gatt")
 
     # ------------------------------------------------------------------
@@ -556,6 +668,8 @@ class AppController(QObject):
 
     # ------------------------------------------------------------------
     def shutdown(self) -> None:
+        self._closed = True
+        self._paired_timer.stop()
         try:
             self.stop_scan()
         except Exception:

@@ -2,11 +2,11 @@
 
 本文补充 [README](../README.md) 中 Windows 端的架构、权限、经典蓝牙/BLE 差异与关键代码。项目实际实现位于：
 
-- [platform/windows.py](../src/bluedeck/platform/windows.py)
-- [platform/parsers.py](../src/bluedeck/platform/parsers.py)
-- [scan_service.py](../src/bluedeck/scan_service.py)
-- [connection_manager.py](../src/bluedeck/connection_manager.py)
-- [codecs.py](../src/bluedeck/codecs.py)
+- [platform/windows.py](../src/bluedesk/platform/windows.py)
+- [platform/parsers.py](../src/bluedesk/platform/parsers.py)
+- [scan_service.py](../src/bluedesk/scan_service.py)
+- [connection_manager.py](../src/bluedesk/connection_manager.py)
+- [codecs.py](../src/bluedesk/codecs.py)
 
 ## 1. 支持范围
 
@@ -414,9 +414,9 @@ subprocess.run(["cmd", "/c", "start", "", "ms-settings:sound"], timeout=5)
 
 ## 14. 相关文件
 
-- [WindowsPlatform](../src/bluedeck/platform/windows.py)
-- [PnP 解析器](../src/bluedeck/platform/parsers.py)
-- [BLE 扫描](../src/bluedeck/scan_service.py)
-- [连接与 GATT](../src/bluedeck/connection_manager.py)
-- [DPI 示例帧](../src/bluedeck/protocols/vendor_examples.py)
+- [WindowsPlatform](../src/bluedesk/platform/windows.py)
+- [PnP 解析器](../src/bluedesk/platform/parsers.py)
+- [BLE 扫描](../src/bluedesk/scan_service.py)
+- [连接与 GATT](../src/bluedesk/connection_manager.py)
+- [DPI 示例帧](../src/bluedesk/protocols/vendor_examples.py)
 - [C# / Qt 替代方案](alternatives.md)

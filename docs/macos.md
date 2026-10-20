@@ -2,10 +2,10 @@
 
 本文补充 [README](../README.md) 中 macOS 端的架构、权限、CoreBluetooth 主线程问题、经典蓝牙限制与关键代码。项目实际实现位于：
 
-- [platform/macos.py](../src/bluedeck/platform/macos.py)
-- [platform/parsers.py](../src/bluedeck/platform/parsers.py)
-- [scan_service.py](../src/bluedeck/scan_service.py)
-- [connection_manager.py](../src/bluedeck/connection_manager.py)
+- [platform/macos.py](../src/bluedesk/platform/macos.py)
+- [platform/parsers.py](../src/bluedesk/platform/parsers.py)
+- [scan_service.py](../src/bluedesk/scan_service.py)
+- [connection_manager.py](../src/bluedesk/connection_manager.py)
 
 ## 1. 支持范围
 
@@ -15,7 +15,8 @@ Qt 兼容性提示：Bleak/CoreBluetooth 路径支持 macOS 10.15+，但 PySide6
 | --- | --- | --- |
 | BLE 扫描 | 支持 | Bleak / CoreBluetooth |
 | BLE GATT | 支持 | Bleak / CoreBluetooth |
-| 已配对设备枚举 | 支持 | system_profiler + 可选 blueutil |
+| 已配对设备枚举 | 支持 | system_profiler，原生 IOBluetooth 后备，可选 blueutil |
+| 已配对设备连接 / 断开 | 支持 | 原生 IOBluetooth；可选 blueutil |
 | 系统音量 | 支持 | osascript |
 | 媒体控制 | 支持（受自动化权限影响） | AppleScript |
 | 经典 inquiry / SDP / RFCOMM | 不支持 | 需 Swift/ObjC 辅助进程或 Qt |
@@ -47,7 +48,7 @@ Qt 兼容性提示：Bleak/CoreBluetooth 路径支持 macOS 10.15+，但 PySide6
 
 ### 2.2 未打包直接运行
 
-- python -m bluedeck 运行在 Terminal / iTerm / Python 进程下。
+- python -m bluedesk 运行在 Terminal / iTerm / Python 进程下。
 - TCC 权限归属于启动它的应用（Terminal、iTerm、PyCharm、VS Code 等）。
 - 首次扫描时系统弹出“允许此应用使用蓝牙？”。
 - 如果误点拒绝：
@@ -209,6 +210,10 @@ for item in parse_system_profiler_bluetooth(out):
 
 ### 4.2 blueutil（可选）
 
+当前应用会自动安装 `pyobjc-framework-IOBluetooth`，优先通过 `IOBluetoothDevice` 的 `openConnection()` / `closeConnection()` 操作已配对设备，并核对系统连接状态。blueutil 是旧安装环境的可选兼容路径，不再是连接/断开的必需依赖。
+
+解析器同时兼容 `device_name` 字段和新系统的 `{"设备名称": {"device_address": ...}}` 结构。系统报告的电量和固件信息会显示在真实设备详情中，连接状态每 10 秒刷新。
+
 ~~~bash
 brew install blueutil
 blueutil --paired --format json
@@ -223,7 +228,7 @@ blueutil --power 1
 - /usr/local/bin/blueutil
 - PATH
 
-未安装时：
+原生 IOBluetooth 绑定与 blueutil 均未安装时：
 - 连接操作会打开系统设置。
 - 面板中系统配对能力显示为不可用。
 - 不把“打开设置”当作连接成功。
@@ -373,7 +378,7 @@ func sendMediaKey(_ key: Int32) {
 python -m pip install pyinstaller
 pyinstaller --windowed --name BlueDesk \
   --icon assets/BlueDesk.icns \
-  src/bluedeck/__main__.py
+  src/bluedesk/__main__.py
 ~~~
 
 生成 .app 后：
@@ -479,8 +484,8 @@ asyncio.run(main())
 
 ## 13. 相关文件
 
-- [MacOSPlatform](../src/bluedeck/platform/macos.py)
-- [system_profiler 解析器](../src/bluedeck/platform/parsers.py)
-- [BLE 扫描与预加载](../src/bluedeck/scan_service.py)
-- [连接与 GATT](../src/bluedeck/connection_manager.py)
+- [MacOSPlatform](../src/bluedesk/platform/macos.py)
+- [system_profiler 解析器](../src/bluedesk/platform/parsers.py)
+- [BLE 扫描与预加载](../src/bluedesk/scan_service.py)
+- [连接与 GATT](../src/bluedesk/connection_manager.py)
 - [C# / Qt 替代方案](alternatives.md)

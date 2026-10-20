@@ -52,7 +52,7 @@ class ConnectionManager(QObject):
     operation_finished = Signal(str, str, bool)
     log = Signal(str, str, str)  # level, address, message
 
-    _system_result = Signal(str, bool, str)
+    _system_result = Signal(str, bool, bool, str)
 
     def __init__(
         self,
@@ -70,7 +70,8 @@ class ConnectionManager(QObject):
         self._system_connected: Set[str] = set()
         self._demo_connected: Set[str] = set()
         self._demo_devices: Dict[str, DeviceInfo] = {}
-        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="bluedeck-system")
+        self._demo_generation = 0
+        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="bluedesk-system")
         self._system_result.connect(self._on_system_result)
 
     # ------------------------------------------------------------------
@@ -82,6 +83,29 @@ class ConnectionManager(QObject):
     def is_connected(self, address: str) -> bool:
         return address in self._clients or address in self._system_connected or address in self._demo_connected
 
+    def has_gatt_connection(self, address: str) -> bool:
+        return address in self._clients
+
+    def is_pending(self, address: str) -> bool:
+        return address in self._pending
+
+    def sync_system_state(self, address: str, connected: bool) -> None:
+        if self.has_gatt_connection(address) or self.is_pending(address):
+            return
+        if connected:
+            self._system_connected.add(address)
+        else:
+            self._system_connected.discard(address)
+
+    def clear_demo(self) -> None:
+        self._demo_generation += 1
+        for address in self._demo_devices.keys() | self._demo_connected:
+            self._services.pop(address, None)
+        self._pending.difference_update({a for a in self._pending if a.startswith("demo:")})
+        self._notifying = {item for item in self._notifying if not item[0].startswith("demo:")}
+        self._demo_connected.clear()
+        self._demo_devices.clear()
+
     def connect_device(self, device: DeviceInfo) -> None:
         address = device.address
         if not address:
@@ -91,7 +115,8 @@ class ConnectionManager(QObject):
         self._pending.add(address)
         self.state_changed.emit(address, ConnectionState.CONNECTING.value, "正在建立连接…")
         if device.metadata.get("demo"):
-            QTimer.singleShot(600, lambda: self._demo_connect(device))
+            generation = self._demo_generation
+            QTimer.singleShot(600, lambda: self._demo_connect(device) if generation == self._demo_generation else None)
             return
         if self._should_use_ble(device):
             if BleakClient is None:
@@ -108,15 +133,19 @@ class ConnectionManager(QObject):
 
     def disconnect_device(self, device: DeviceInfo) -> None:
         address = device.address
+        if address in self._pending:
+            return
         if address in self._demo_connected:
             self.state_changed.emit(address, ConnectionState.DISCONNECTING.value, "正在断开…")
-            QTimer.singleShot(350, lambda: self._demo_disconnect(address))
+            generation = self._demo_generation
+            QTimer.singleShot(350, lambda: self._demo_disconnect(address) if generation == self._demo_generation else None)
             return
         if address in self._clients:
             self.state_changed.emit(address, ConnectionState.DISCONNECTING.value, "正在断开 GATT 连接…")
             self.runner.submit(self._disconnect_ble(address))
             return
-        if address in self._system_connected:
+        if address in self._system_connected or device.connected:
+            self._pending.add(address)
             self.state_changed.emit(address, ConnectionState.DISCONNECTING.value, "正在请求系统断开…")
             self._disconnect_with_system(device)
             return
@@ -360,6 +389,7 @@ class ConnectionManager(QObject):
             try:
                 data = await client.read_gatt_char(chars["2a19"])  # type: ignore[attr-defined]
                 telemetry.battery = parse_battery_level(bytes(data))
+                telemetry.extra["battery_source"] = "标准 GATT · Battery Level 0x2A19"
             except Exception as exc:
                 self._log("WARN", address, "读取电量失败：%s" % exc)
         for short, attr in (
@@ -423,29 +453,32 @@ class ConnectionManager(QObject):
     # ------------------------------------------------------------------
     def _connect_with_system(self, device: DeviceInfo) -> None:
         future = self._executor.submit(self.platform.system_connect, device)
-        future.add_done_callback(lambda done: self._emit_system_result(device.address, done))
+        future.add_done_callback(lambda done: self._emit_system_result(device.address, True, done))
 
     def _disconnect_with_system(self, device: DeviceInfo) -> None:
         future = self._executor.submit(self.platform.system_disconnect, device)
-        future.add_done_callback(lambda done: self._emit_system_result(device.address, done))
+        future.add_done_callback(lambda done: self._emit_system_result(device.address, False, done))
 
-    def _emit_system_result(self, address: str, future: concurrent.futures.Future) -> None:
+    def _emit_system_result(self, address: str, connecting: bool, future: concurrent.futures.Future) -> None:
         try:
             ok, message = future.result()
         except Exception as exc:
             ok, message = False, "系统连接操作失败：%s" % exc
-        self._system_result.emit(address, bool(ok), str(message))
+        self._system_result.emit(address, connecting, bool(ok), str(message))
 
-    def _on_system_result(self, address: str, ok: bool, message: str) -> None:
+    def _on_system_result(self, address: str, connecting: bool, ok: bool, message: str) -> None:
         self._pending.discard(address)
-        if ok:
+        # A failed disconnect leaves the existing system link intact.
+        connected = connecting if ok else not connecting
+        if connected:
             self._system_connected.add(address)
             self.state_changed.emit(address, ConnectionState.CONNECTED.value, message)
-            self._log("INFO", address, message)
         else:
             self._system_connected.discard(address)
-            self.state_changed.emit(address, ConnectionState.DISCONNECTED.value, message)
-            self._log("WARN", address, message)
+            state = ConnectionState.DISCONNECTED if ok else ConnectionState.FAILED
+            self.state_changed.emit(address, state.value, message)
+        self._log("INFO" if ok else "WARN", address, message)
+        self.operation_finished.emit(address, message, ok)
 
     # ------------------------------------------------------------------
     # demo connection

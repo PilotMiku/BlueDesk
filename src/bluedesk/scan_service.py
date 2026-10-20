@@ -38,6 +38,17 @@ if sys.platform == "darwin" and BLEAK_AVAILABLE:
         pass
 
 
+def scan_error_message(error: Exception) -> str:
+    text = str(error)
+    lower = text.lower()
+    if any(word in lower for word in ("not authorized", "denied", "permission")):
+        hint = "请在系统设置 > 隐私与安全性 > 蓝牙中允许启动 BlueDesk 的应用" if sys.platform == "darwin" else "请检查系统蓝牙访问权限后重新扫描"
+        return "蓝牙权限未授权，%s。详情：%s" % (hint, text)
+    if any(word in lower for word in ("turned off", "powered off")):
+        return "系统蓝牙已关闭，请开启蓝牙后重新扫描。详情：" + text
+    return "BLE 扫描失败：" + text
+
+
 class ScanService(QObject):
     device_found = Signal(object)
     scanning_changed = Signal(bool, str)
@@ -83,6 +94,7 @@ class ScanService(QObject):
     async def _scan(self) -> None:
         self._stop_event = asyncio.Event()
         scanner = None
+        message = "扫描已停止"
         try:
             if self._stop_requested:
                 return
@@ -91,26 +103,27 @@ class ScanService(QObject):
             await scanner.start()
             while not self._stop_event.is_set():
                 await asyncio.sleep(0.25)
+        except Exception as exc:
+            message = "扫描失败，请查看底部错误提示"
+            self.error.emit(scan_error_message(exc))
+        finally:
             try:
-                await asyncio.wait_for(scanner.stop(), timeout=3.0)
-            except asyncio.TimeoutError:
+                if scanner is not None:
+                    await asyncio.wait_for(scanner.stop(), timeout=3.0)
+            except (Exception, asyncio.CancelledError) as exc:
                 # CoreBluetooth occasionally misses the isScanning KVO update.
                 # Release the underlying scan directly and continue.
-                self.error.emit("停止 BLE 扫描超时，已强制释放扫描器")
+                self.error.emit("停止 BLE 扫描失败，已尝试释放扫描器：%s" % exc)
                 try:
-                    central = scanner._manager.central_manager  # type: ignore[attr-defined]
+                    central = scanner._backend._manager.central_manager  # type: ignore[attr-defined]
                     central.stopScan()
                 except Exception:
                     pass
-            self.scanning_changed.emit(False, "扫描已停止")
-        except Exception as exc:
-            self.error.emit("BLE 扫描失败：%s" % exc)
-            self.scanning_changed.emit(False, "扫描失败")
-        finally:
             self._active = False
             self._scanner = None
             self._stop_event = None
             self._stop_requested = False
+            self.scanning_changed.emit(False, message)
 
     def _on_detection(self, device, advertisement_data=None) -> None:
         try:

@@ -4,10 +4,10 @@ install:
 	python -m pip install -e .
 
 run:
-	PYTHONPATH=src python -m bluedeck
+	PYTHONPATH=src python -m bluedesk
 
 demo:
-	PYTHONPATH=src python -m bluedeck --demo
+	PYTHONPATH=src python -m bluedesk --demo
 
 test:
 	QT_QPA_PLATFORM=offscreen PYTHONPATH=src python -m pytest -q

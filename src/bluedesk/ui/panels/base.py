@@ -65,6 +65,7 @@ class BatteryCard(Card):
         self.layout.addLayout(layout)
 
     def set_telemetry(self, telemetry: Optional[Telemetry]) -> None:
+        self.source.setText(telemetry.extra.get("battery_source", "Battery Level 0x2A19") if telemetry else "设备尚未报告电量")
         if telemetry and telemetry.battery is not None:
             self.ring.set_level(telemetry.battery, bool(telemetry.charging))
             self.status.setText("充电中" if telemetry.charging else "电量正常")

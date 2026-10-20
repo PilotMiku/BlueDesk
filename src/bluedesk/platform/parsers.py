@@ -7,7 +7,7 @@ import re
 from typing import Any, Dict, Iterable, List, Optional
 
 from ..classifier import explain_device
-from ..models import ConnectionState, DeviceInfo, Transport
+from ..models import ConnectionState, DeviceInfo, Telemetry, Transport
 
 
 def _as_bool(value: Any) -> bool:
@@ -50,6 +50,12 @@ def _walk_device_dicts(node: Any, context: str = "") -> Iterable[
                 child_context = "connected"
             else:
                 child_context = context
+            # Current macOS uses {"Device name": {"device_address": ...}}
+            # instead of storing device_name inside the device record.
+            if isinstance(value, dict) and "device_address" in value and not _find_value(
+                value, ("device_name", "name", "DeviceName", "FriendlyName")
+            ):
+                value = dict(value, device_name=str(key))
             if isinstance(value, (dict, list)):
                 for item in _walk_device_dicts(value, child_context):
                     yield item
@@ -152,6 +158,24 @@ def parse_blueutil_paired(raw: Any) -> List[Dict[str, Any]]:
     return result
 
 
+def system_telemetry(raw: Dict[str, Any]) -> Telemetry:
+    """Read values actually reported by macOS; missing fields stay unknown."""
+    battery = None
+    try:
+        value = int(str(raw.get("device_batteryLevelMain", "")).rstrip("%"))
+        if 0 <= value <= 100:
+            battery = value
+    except (TypeError, ValueError):
+        pass
+    return Telemetry(
+        battery=battery,
+        extra={"battery_source": "macOS 系统报告"} if battery is not None else {},
+        firmware=str(raw.get("device_firmwareVersion") or ""),
+        model=str(raw.get("device_model") or ""),
+        serial=str(raw.get("device_serialNumber") or ""),
+    )
+
+
 _MAC_RE = re.compile(r"(?:DEV_|&)([0-9A-F]{12})(?=[\\_&]|$)", re.IGNORECASE)
 
 
@@ -216,6 +240,7 @@ def build_paired_device(
     platform: str = "unknown",
     source: str = "system",
     metadata: Optional[Dict[str, Any]] = None,
+    class_of_device: Optional[int] = None,
 ) -> DeviceInfo:
     classification = explain_device(
         name=name,
@@ -223,6 +248,7 @@ def build_paired_device(
         os_hint=minor_type,
         paired=paired,
         connected=connected,
+        class_of_device=class_of_device,
     )
     return DeviceInfo(
         address=address,
@@ -234,6 +260,7 @@ def build_paired_device(
         state=ConnectionState.CONNECTED if connected else ConnectionState.DISCONNECTED,
         platform=platform,
         source=source,
+        class_of_device=class_of_device,
         confidence=classification.confidence,
         classification_source=classification.source,
         classification_reason=classification.reason,

@@ -7,9 +7,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
-from bluedeck.controller import AppController
-from bluedeck.ui.main_window import MainWindow
-from bluedeck.ui.theme import apply_theme
+from bluedesk.controller import AppController
+from bluedesk.ui.main_window import MainWindow
+from bluedesk.ui.theme import apply_theme
 
 
 def test_demo_ui_smoke(tmp_path, monkeypatch):

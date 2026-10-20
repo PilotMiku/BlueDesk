@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from bluedeck.models import (
+from bluedesk.models import (
     ConnectionState,
     DeviceInfo,
     DeviceType,

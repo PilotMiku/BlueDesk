@@ -731,5 +731,5 @@ BlueDeskQt/
 - [项目 README](../README.md)
 - [Windows 实现](windows.md)
 - [macOS 实现](macos.md)
-- [设备类型识别](../src/bluedeck/classifier.py)
-- [协议适配器](../src/bluedeck/protocols)
+- [设备类型识别](../src/bluedesk/classifier.py)
+- [协议适配器](../src/bluedesk/protocols)

@@ -11,4 +11,4 @@ if (Test-Path ".venv\Scripts\python.exe") {
 }
 
 $env:PYTHONPATH = "$Root\src"
-& $Python -m bluedeck @args
+& $Python -m bluedesk @args

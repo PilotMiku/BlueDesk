@@ -24,7 +24,7 @@ macOS 兼容性说明：Bleak/CoreBluetooth 路径支持 macOS 10.15+；当前�
 | BLE GATT 浏览 / 读 / 写 / 通知 | 已实现 | 含 HEX/文本、服务树、数据输出 |
 | 标准电量 / 心率 / 固件读取 | 已实现 | Battery 0x2A19、Heart Rate 0x2A37、Device Info 0x180A |
 | 日志与 CSV / JSON / TXT 导出 | 已实现 | 内存环形缓冲 + JSONL 持久化 |
-| 系统配对 / 断开 | 平台受限 | 打开系统设置；macOS 安装 blueutil 后可直接 connect/disconnect |
+| 系统连接 / 断开 | macOS 已实现 | 原生 IOBluetooth 控制已配对设备；blueutil 可选；新设备配对和 Windows 经典蓝牙仍使用系统设置 |
 | 设备级 EQ / DPI / 背光 / 按键映射 | 需厂商协议 | 提供完整 UI 占位、协议接口和示例数据帧，默认不向未知设备写入 |
 | 经典蓝牙 RFCOMM / SPP | 未内置 | PyBluez 兼容性差；保留协议适配接口，推荐 Qt/C# 方案 |
 | 固件升级 | 路线图 | 需要厂商 DFU 协议与签名校验 |
@@ -62,7 +62,7 @@ macOS 兼容性说明：Bleak/CoreBluetooth 路径支持 macOS 10.15+；当前�
    - 通用设备：连接、重命名、RSSI、GATT 服务、日志。
 4. **连接管理**
    - 未连接 / 连接中 / 已连接 / 断开中 / 连接失败状态。
-   - BLE 通过 Bleak 建立 GATT 连接；经典蓝牙通过系统设置或 blueutil。
+   - BLE 通过 Bleak 建立 GATT 连接；macOS 已配对设备通过原生 IOBluetooth 连接/断开，blueutil 为可选兼容方案。
    - 最近设备、默认设备、快速重连、断线回调。
 5. **数据通信**
    - GATT 服务树、特征值属性、读取、写入、通知订阅。
@@ -158,9 +158,9 @@ ThreadPoolExecutor（2-3 线程）
 ### 3.1 源码目录
 
 ~~~text
-src/bluedeck/
+src/bluedesk/
 ├── app.py                    # 入口、参数、QApplication、截图模式
-├── __main__.py               # python -m bluedeck
+├── __main__.py               # python -m bluedesk
 ├── controller.py             # AppController：设备仓库与 UI 编排
 ├── models.py                 # 枚举、DeviceInfo、GATT、Telemetry、LogEntry
 ├── classifier.py             # 设备类型识别（CoD/Appearance/UUID/名称）
@@ -247,7 +247,7 @@ class ConnectionState(str, Enum):
 
 ### 4.2 设备模型
 
-[models.py](src/bluedeck/models.py) 中的 DeviceInfo 是 UI、扫描、连接、持久化共用的唯一设备视图：
+[models.py](src/bluedesk/models.py) 中的 DeviceInfo 是 UI、扫描、连接、持久化共用的唯一设备视图：
 
 ~~~python
 @dataclass
@@ -361,7 +361,7 @@ FeatureStatus 进一步区分：
 
 ## 5. 设备类型识别逻辑
 
-实现：[classifier.py](src/bluedeck/classifier.py)
+实现：[classifier.py](src/bluedesk/classifier.py)
 测试：[test_classifier.py](tests/test_classifier.py)
 
 ### 5.1 优先级
@@ -448,7 +448,7 @@ def decode_class_of_device(cod: int) -> tuple[int, int, int]:
 ### 5.6 设备合并
 
 - BLE 扫描与系统配对列表在 macOS 上地址类型不同，无法直接按地址合并。
-- AppController 会按“大小写不敏感的完整名称”做二级合并；同名设备合并 transport 为 DUAL，保留 BLE UUID 作为主键。
+- AppController 在只有一个候选匹配时按“大小写不敏感的完整名称”合并系统配对记录与 BLE 记录；保留主键和独立的系统 MAC、BLE UUID。同名的两台系统设备不会合并。
 - 如果系统配对设备的名称与 BLE 广播名称不同，可能显示为两个条目。这是 macOS 没有公开 CoreBluetooth UUID 与 MAC 映射导致的平台限制。
 
 ---
@@ -550,7 +550,7 @@ client.connect()
 
 ### 7.2 已配对设备枚举（PowerShell PnP）
 
-实现：[platform/windows.py](src/bluedeck/platform/windows.py)、[platform/parsers.py](src/bluedeck/platform/parsers.py)
+实现：[platform/windows.py](src/bluedesk/platform/windows.py)、[platform/parsers.py](src/bluedesk/platform/parsers.py)
 
 ~~~python
 PS_SCRIPT = (
@@ -730,7 +730,7 @@ macOS 10.15+ 访问蓝牙需要用户授权。打包为 .app 时必须在 Info.p
 
 ### 8.2 Bleak / CoreBluetooth 初始化与主线程预加载
 
-实现：[scan_service.py](src/bluedeck/scan_service.py)
+实现：[scan_service.py](src/bluedesk/scan_service.py)
 
 ~~~python
 if sys.platform == "darwin" and BLEAK_AVAILABLE:
@@ -934,7 +934,8 @@ MainWindow
 | --- | --- | --- |
 | BLE 扫描 | Bleak / WinRT | Bleak / CoreBluetooth |
 | BLE GATT | 支持 | 支持 |
-| 经典设备枚举 | PowerShell PnP；WinRT 可扩展 | system_profiler / blueutil |
+| 经典设备枚举 | PowerShell PnP；WinRT 可扩展 | system_profiler / IOBluetooth / blueutil |
+| 已配对经典设备连接 / 断开 | 系统设置 | 原生 IOBluetooth；blueutil 可选 |
 | 经典 SPP/RFCOMM | PyBluez 不稳定；建议 C#/Qt 辅助进程 | 无公开 Python API；需 Swift/Qt |
 | 系统音量 | pycaw（可选） | osascript |
 | 媒体键 | keybd_event | AppleScript；原生注入需辅助功能 |
@@ -1005,7 +1006,7 @@ MainWindow
 - 不向未知设备自动发送厂商写指令。
 - 写入前由用户选择特征值；GATT 页面有风险提示。
 - 日志可能包含设备地址与数据，导出前应提醒用户脱敏。
-- 经典蓝牙连接只调用系统/blueutil，不绕过配对。
+- 经典蓝牙连接调用系统 IOBluetooth / blueutil，不绕过配对。
 - 后台线程异常不会直接崩溃 UI；错误写入日志并更新状态。
 - 设置/日志目录不可写时应用继续工作，不阻塞启动。
 
@@ -1073,8 +1074,16 @@ python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e .
-python -m bluedeck
+python -m bluedesk
 ~~~
+
+正常启动默认使用真实设备。已有项目虚拟环境时，在项目根目录运行：
+
+~~~bash
+./scripts/run.sh --real
+~~~
+
+真实模式会读取系统配对设备、每 10 秒刷新连接状态并扫描附近 BLE 设备。macOS 经典蓝牙连接/断开使用安装依赖时自动安装的 `pyobjc-framework-IOBluetooth`，无需额外安装 blueutil。已由系统报告的耳机电量会标注为“macOS 系统报告”。首次扫描请允许启动 BlueDesk 的应用访问蓝牙。
 
 Windows PowerShell：
 
@@ -1084,7 +1093,7 @@ py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install -e .
-python -m bluedeck
+python -m bluedesk
 ~~~
 
 可选增强：
@@ -1093,24 +1102,34 @@ python -m bluedeck
 # Windows 绝对音量
 python -m pip install pycaw comtypes
 
-# macOS 经典设备连接/断开
+# macOS 可选的兼容工具（已有原生 IOBluetooth 连接/断开）
 brew install blueutil
 ~~~
 
 ### 12.2 演示模式
 
 ~~~bash
-python -m bluedeck --demo
-python -m bluedeck --demo --no-scan
+python -m bluedesk --demo
+python -m bluedesk --demo --no-scan
 ~~~
 
 不需要蓝牙权限，启动后自动加载 8 个演示设备并连接第一个。
 
+演示模式仅对当前会话生效，不会覆盖正常启动的真实模式。点击顶部“使用真实设备”或“退出演示并扫描”可以直接退出演示，模拟设备和数据会被清除。
+
+真实设备诊断（只读取和扫描，不连接或断开设备）：
+
+~~~bash
+.venv/bin/python scripts/diagnose_bluetooth.py --seconds 12
+~~~
+
 ### 12.3 截图模式
 
 ~~~bash
-QT_QPA_PLATFORM=offscreen python -m bluedeck --screenshot artifacts/overview.png
+QT_QPA_PLATFORM=offscreen python -m bluedesk --screenshot artifacts/overview.png
 ~~~
+
+默认截图使用演示数据。添加 `--real` 可截取真实设备界面；添加 `--no-scan` 可只显示系统配对设备。
 
 ### 12.4 测试
 
@@ -1142,7 +1161,7 @@ macOS：
 
 ~~~bash
 python -m pip install pyinstaller
-pyinstaller --windowed --name BlueDesk --icon assets/BlueDesk.icns src/bluedeck/__main__.py
+pyinstaller --windowed --name BlueDesk --icon assets/BlueDesk.icns src/bluedesk/__main__.py
 # 然后向生成的 .app/Contents/Info.plist 加入 NSBluetoothAlwaysUsageDescription
 codesign --deep --force --options runtime --sign "Developer ID Application: ..." dist/BlueDesk.app
 ~~~
@@ -1151,7 +1170,7 @@ Windows：
 
 ~~~powershell
 python -m pip install pyinstaller
-pyinstaller --noconfirm --windowed --name BlueDesk --icon assets/BlueDesk.ico src/bluedeck/__main__.py
+pyinstaller --noconfirm --windowed --name BlueDesk --icon assets/BlueDesk.ico src/bluedesk/__main__.py
 ~~~
 
 打包后必须在目标机器重新验证蓝牙权限与 CoreBluetooth 初始化。
@@ -1205,16 +1224,16 @@ BlueDesk 是一个通用的设备管理与调试工具，不是任何硬件厂�
 
 ## 15. 文件索引
 
-- 核心控制器：[controller.py](src/bluedeck/controller.py)
-- 设备模型：[models.py](src/bluedeck/models.py)
-- 类型识别：[classifier.py](src/bluedeck/classifier.py)
-- BLE 扫描：[scan_service.py](src/bluedeck/scan_service.py)
-- 连接/GATT：[connection_manager.py](src/bluedeck/connection_manager.py)
-- 平台适配：[platform/](src/bluedeck/platform)
-- 协议能力：[protocols/](src/bluedeck/protocols)
-- 动态面板：[ui/panels/](src/bluedeck/ui/panels)
-- 主窗口：[ui/main_window.py](src/bluedeck/ui/main_window.py)
-- GATT UI：[ui/gatt_browser.py](src/bluedeck/ui/gatt_browser.py)
+- 核心控制器：[controller.py](src/bluedesk/controller.py)
+- 设备模型：[models.py](src/bluedesk/models.py)
+- 类型识别：[classifier.py](src/bluedesk/classifier.py)
+- BLE 扫描：[scan_service.py](src/bluedesk/scan_service.py)
+- 连接/GATT：[connection_manager.py](src/bluedesk/connection_manager.py)
+- 平台适配：[platform/](src/bluedesk/platform)
+- 协议能力：[protocols/](src/bluedesk/protocols)
+- 动态面板：[ui/panels/](src/bluedesk/ui/panels)
+- 主窗口：[ui/main_window.py](src/bluedesk/ui/main_window.py)
+- GATT UI：[ui/gatt_browser.py](src/bluedesk/ui/gatt_browser.py)
 - 测试：[tests/](tests)
 - Windows 细节：[docs/windows.md](docs/windows.md)
 - macOS 细节：[docs/macos.md](docs/macos.md)

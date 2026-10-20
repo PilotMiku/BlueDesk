@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from bluedeck.classifier import (
+from bluedesk.classifier import (
     Classification,
     classify_device,
     decode_class_of_device,
@@ -10,7 +10,7 @@ from bluedeck.classifier import (
     normalize_uuid,
     uuid16,
 )
-from bluedeck.models import DeviceType
+from bluedesk.models import DeviceType
 
 
 def cod(major: int, minor: int = 0, services: int = 0) -> int:

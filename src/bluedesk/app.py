@@ -20,9 +20,11 @@ from .ui.theme import apply_theme
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="BlueDesk Bluetooth device manager")
-    parser.add_argument("--demo", action="store_true", help="load simulated devices (no Bluetooth permission required)")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--demo", action="store_true", help="load simulated devices (no Bluetooth permission required)")
+    mode.add_argument("--real", action="store_true", help="use real Bluetooth devices (the default)")
     parser.add_argument("--no-scan", action="store_true", help="do not start BLE scan automatically")
-    parser.add_argument("--screenshot", metavar="PATH", help="render the UI to PATH and exit (implies --demo)")
+    parser.add_argument("--screenshot", metavar="PATH", help="render the UI to PATH and exit (demo unless --real)")
     parser.add_argument("--version", action="store_true", help="print version and exit")
     return parser.parse_args(argv)
 
@@ -41,7 +43,7 @@ def main(argv=None) -> int:
     app.setWindowIcon(QIcon(make_app_icon(256)))
     apply_theme(app)
 
-    demo = args.demo or bool(args.screenshot)
+    demo = args.demo or (bool(args.screenshot) and not args.real)
     controller = AppController(demo_mode=demo, auto_scan=(not args.no_scan and not demo))
 
     def handle_exception(exc_type, exc_value, exc_tb):

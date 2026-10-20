@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import json
 
-from bluedeck.models import ConnectionState, DeviceType, Transport
-from bluedeck.platform.parsers import (
+from bluedesk.models import ConnectionState, DeviceType, Transport
+from bluedesk.platform.parsers import (
     build_paired_device,
     extract_mac_from_instance_id,
     parse_blueutil_paired,

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from bluedeck.models import DeviceInfo, DeviceType, Transport
-from bluedeck.protocols import FeatureStatus, ProtocolRegistry
+from bluedesk.models import DeviceInfo, DeviceType, Transport
+from bluedesk.protocols import FeatureStatus, ProtocolRegistry
 
 
 def test_feature_matrix_standard_and_vendor():

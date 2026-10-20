@@ -241,7 +241,10 @@ class DeviceDetail(QWidget):
     def _refresh_actions(self) -> None:
         if not self.device:
             return
-        if self.device.connected:
+        if self.device.state is ConnectionState.DISCONNECTING:
+            self.connect_btn.setText("断开中…")
+            self.connect_btn.setProperty("variant", "ghost")
+        elif self.device.connected:
             self.connect_btn.setText("断开连接")
             self.connect_btn.setProperty("variant", "danger")
         elif self.device.state is ConnectionState.CONNECTING:
@@ -253,7 +256,7 @@ class DeviceDetail(QWidget):
         else:
             self.connect_btn.setText("连接设备")
             self.connect_btn.setProperty("variant", "primary")
-        self.connect_btn.setEnabled(self.device.state is not ConnectionState.CONNECTING)
+        self.connect_btn.setEnabled(self.device.state not in (ConnectionState.CONNECTING, ConnectionState.DISCONNECTING))
         repolish(self.connect_btn)
         is_default = self.controller.is_default(self.device.address)
         self.default_btn.setText("已设默认" if is_default else "设为默认")
@@ -273,7 +276,8 @@ class DeviceDetail(QWidget):
         )
         telemetry = self.controller.telemetry_for(device.address)
         battery = telemetry.battery if telemetry else device.metadata.get("battery")
-        self.battery_tile.set_value("%d%%" % int(battery) if battery is not None else "—", "标准 GATT / 厂商")
+        source = telemetry.extra.get("battery_source", "标准 GATT / 厂商") if telemetry else "等待设备报告"
+        self.battery_tile.set_value("%d%%" % int(battery) if battery is not None else "—", source)
         self.confidence_tile.set_value("%.0f%%" % (device.confidence * 100), device.classification_source or "fallback")
         self._update_services_tile()
 

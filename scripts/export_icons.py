@@ -11,7 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PIL import Image
 from PySide6.QtWidgets import QApplication
 
-from bluedeck.ui.icons import make_app_icon
+from bluedesk.ui.icons import make_app_icon
 
 
 def main() -> int:

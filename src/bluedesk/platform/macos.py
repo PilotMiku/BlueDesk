@@ -19,6 +19,11 @@ from .parsers import (
     parse_system_profiler_bluetooth,
 )
 
+try:
+    from IOBluetooth import IOBluetoothDevice
+except ImportError:  # Optional fallback for older installations.
+    IOBluetoothDevice = None
+
 BLUETIL_CANDIDATES = ("/opt/homebrew/bin/blueutil", "/usr/local/bin/blueutil", "blueutil")
 MEDIA_APPS = ("Spotify", "Music")
 
@@ -35,8 +40,8 @@ class MacOSPlatform(PlatformAdapter):
         self.blueutil = which(*BLUETIL_CANDIDATES)
         self.capabilities = PlatformCapabilities(
             name="macOS",
-            classic_discovery=bool(self.blueutil),
-            classic_control=bool(self.blueutil),
+            classic_discovery=True,
+            classic_control=bool(self.blueutil or IOBluetoothDevice),
             absolute_volume=True,
             media_keys=True,
             system_pairing=bool(self.blueutil),
@@ -71,7 +76,7 @@ class MacOSPlatform(PlatformAdapter):
                         transport=transport,
                         platform="macos",
                         source="system_profiler",
-                        metadata={"minor_type": item.get("minor_type", "")},
+                        metadata={"minor_type": item.get("minor_type", ""), "system_info": item["raw"]},
                     )
                 )
         if self.blueutil:
@@ -89,15 +94,24 @@ class MacOSPlatform(PlatformAdapter):
                             source="blueutil",
                         )
                     )
-        # Merge duplicate names from the two sources.
+        if not devices and IOBluetoothDevice is not None:
+            for native in IOBluetoothDevice.pairedDevices() or []:
+                devices.append(build_paired_device(
+                    name=str(native.name() or native.addressString()),
+                    address=str(native.addressString()).replace("-", ":").upper(),
+                    connected=bool(native.isConnected()), paired=True,
+                    transport=Transport.CLASSIC, platform="macos", source="iobluetooth",
+                    class_of_device=int(native.classOfDevice()),
+                ))
+        # Use addresses so two devices with the same name remain distinct.
         merged: List[DeviceInfo] = []
-        by_name = {}
+        by_address = {}
         for device in devices:
-            key = (device.name or device.address).strip().lower()
-            if key in by_name:
-                by_name[key].merge(device)
+            key = device.key
+            if key in by_address:
+                by_address[key].merge(device)
             else:
-                by_name[key] = device
+                by_address[key] = device
                 merged.append(device)
         return merged
 
@@ -119,6 +133,8 @@ class MacOSPlatform(PlatformAdapter):
         return (code == 0, "已打开系统声音设置" if code == 0 else (err or "无法打开声音设置"))
 
     def system_connect(self, device: DeviceInfo) -> Tuple[bool, str]:
+        if IOBluetoothDevice is not None:
+            return self._native_connection(device, True)
         if self.blueutil and device.address and not device.address.startswith("macos:"):
             code, out, err = run_command([self.blueutil, "--connect", device.address], timeout=20.0)
             if code == 0:
@@ -128,12 +144,31 @@ class MacOSPlatform(PlatformAdapter):
         return False, "请在弹出的系统蓝牙设置中连接此设备（未安装 blueutil）"
 
     def system_disconnect(self, device: DeviceInfo) -> Tuple[bool, str]:
+        if IOBluetoothDevice is not None:
+            return self._native_connection(device, False)
         if self.blueutil and device.address and not device.address.startswith("macos:"):
             code, out, err = run_command([self.blueutil, "--disconnect", device.address], timeout=20.0)
             if code == 0:
                 return True, "已请求 macOS 断开 %s" % device.display_name
             return False, (err or out or "blueutil 断开失败").strip()
         return False, "断开经典蓝牙设备需要安装 blueutil 或在系统设置中操作"
+
+    def _native_connection(self, device: DeviceInfo, connect: bool) -> Tuple[bool, str]:
+        address = str(device.metadata.get("system_address") or device.address)
+        if not address or address.startswith("macos:"):
+            return False, "此设备缺少蓝牙地址，请在系统蓝牙设置中操作"
+        native = IOBluetoothDevice.deviceWithAddressString_(address)
+        if native is None:
+            return False, "系统无法找到此蓝牙设备，请先在系统设置中配对"
+        action = "连接" if connect else "断开"
+        if bool(native.isConnected()) == connect:
+            return True, "%s已%s" % (device.display_name, action)
+        result = native.openConnection() if connect else native.closeConnection()
+        if result != 0:
+            return False, "%s失败（macOS 错误 %s），请确认设备已开机且已配对" % (action, result)
+        if bool(native.isConnected()) != connect:
+            return False, "已请求%s，但系统尚未确认，请刷新设备状态" % action
+        return True, "%s已%s" % (device.display_name, action)
 
     def _osascript(self, script: str, timeout: float = 5.0) -> Tuple[int, str, str]:
         return run_command(["osascript", "-e", script], timeout=timeout)

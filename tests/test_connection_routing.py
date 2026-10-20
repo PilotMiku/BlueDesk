@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from bluedeck.connection_manager import ConnectionManager, short_uuid
-from bluedeck.models import DeviceInfo, DeviceType, Transport
+from bluedesk.connection_manager import ConnectionManager, short_uuid
+from bluedesk.models import DeviceInfo, DeviceType, Transport
 
 
 def test_ble_routing_audio_uses_system():
